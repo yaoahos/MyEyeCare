@@ -485,6 +485,8 @@ async function checkUpdate(isStartup) {
       }
     }
     if (isStartup && compareVersion(latest, APP_VERSION) > 0) {
+      // 启动最小化时窗口隐藏在托盘，先唤起主窗口，否则弹窗用户看不到
+      invoke("show_main_window").catch(() => {});
       $("#modalVersion").textContent = latest;
       renderUpdateNotes(release);
       $("#updateModal").classList.add("show");

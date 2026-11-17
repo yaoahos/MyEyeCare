@@ -16,6 +16,16 @@ fn close_main_window(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 唤起并显示主窗口：用于启动检查到更新时，让托盘状态下的提醒弹窗可见。
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
 /// 绿色单文件版标识：前端据此隐藏开机自启，避免注册表写入。
 #[tauri::command]
 fn is_portable() -> bool {
@@ -95,6 +105,7 @@ pub fn run() {
             autostart::is_autostart_enabled,
             autostart::set_autostart,
             close_main_window,
+            show_main_window,
             is_portable,
             open_external,
         ])
