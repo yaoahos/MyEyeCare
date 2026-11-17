@@ -1,6 +1,6 @@
 # MyEyeCare
 
-MyEyeCare 是一个离线优先的 Windows 护眼小工具。它通过亮度、色温与柔色遮罩调节屏幕观感，内置多套护眼模板，可开机自启并常驻托盘。基于 **Tauri 2 + Rust + 静态前端** 实现，不采集任何信息。
+MyEyeCare 是一个轻量级的 Windows 护眼小工具。它通过亮度、色温与柔色遮罩调节屏幕观感，内置多套护眼模板，可开机自启并常驻托盘。基于 **Tauri 2 + Rust + 静态前端** 实现，不采集隐私信息。
 
 - 项目名：`MyEyeCare`
 - 应用标识：`com.myeyecare.desktop`
@@ -135,19 +135,14 @@ npm run build            # 构建 NSIS 中文安装包
 npm run build:portable   # 构建绿色单文件版
 ```
 
-Tauri 原始产物：
+构建产物位于 `src-tauri/target/release/`，安装包在 `bundle/nsis/` 子目录。Tauri 自动生成的原始文件名与分发名不同（安装包原始名以小写 `-setup.exe` 结尾，单文件程序原始名为 `MyEyeCare.exe`），发布时统一重命名为：
 
 ```text
-src-tauri/target/release/bundle/nsis/MyEyeCare_1.0.0_x64-setup.exe
-src-tauri/target/release/MyEyeCare.exe
+MyEyeCare_1.0.0_x64-Setup.exe      安装包，双击安装
+MyEyeCare_1.0.0_x64-Portable.exe   绿色单文件版，双击即用
 ```
 
-构建后按以下分发文件名重命名：
-
-```text
-MyEyeCare_1.0.0_x64-Setup.exe
-MyEyeCare_1.0.0_x64-Portable.exe
-```
+若构建时显式指定目标（`--target x86_64-pc-windows-msvc`），产物路径会多一层 `x86_64-pc-windows-msvc/`，文件名不变。
 
 本机未预装 NSIS 时，Tauri CLI 会自动下载打包工具。
 
