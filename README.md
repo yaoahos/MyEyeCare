@@ -3,7 +3,7 @@
 MyEyeCare 是一个轻量级的 Windows 护眼小工具。它通过亮度、色温与柔色遮罩调节屏幕观感，内置多套护眼模板，可开机自启并常驻托盘。基于 **Tauri 2 + Rust + 静态前端** 实现，不采集隐私信息。
 
 - 项目名：`MyEyeCare`
-- 应用标识：`com.myeyecare.desktop`
+- 应用标识：`com.yaoahos.myeyecare`
 - 当前版本：`1.0.0`
 - 支持平台：Windows 10 / 11（x64，需要 WebView2 运行时）
 - 安装包：`MyEyeCare_1.0.0_x64-Setup.exe`（NSIS，简体中文界面）
