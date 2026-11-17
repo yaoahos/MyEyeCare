@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+
+# 交付物（发布时单独上传，不纳入源码仓库）
+release/
+
+# 系统 / 编辑器 / 备份 / 日志
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.bak
+*~
+
+# 本地预览截图与临时文件
+.workbuddy/
+frontend/_preview_*.html
+
+# 凭证与本地环境配置（防止误传）
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.snk
+*.cer

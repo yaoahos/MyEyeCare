@@ -1,0 +1,38 @@
+[package]
+name = "myeyecare"
+version = "1.0.0"
+description = "轻量级护眼工具"
+authors = ["MyEyeCare"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "my_eye_care_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# 绿色单文件版：设置与 WebView 数据放 exe 同目录，禁用开机自启注册表写入
+portable = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"          # 优先压缩体积
+lto = "fat"              # 全量链接时优化
+codegen-units = 1
+panic = "abort"          # 去掉 unwind 表
+strip = true             # 去掉符号表
+debug = false
+rpath = false
+
+# 依赖也按体积优先编译
+[profile.release.package."*"]
+opt-level = "z"
+strip = true
+codegen-units = 1
