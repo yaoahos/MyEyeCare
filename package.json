@@ -1,6 +1,6 @@
 {
   "name": "myeyecare",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "轻量级护眼工具 - Tauri 桌面应用",
   "scripts": {

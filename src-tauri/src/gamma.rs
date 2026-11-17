@@ -197,6 +197,8 @@ static GAMMA_LOCK: Mutex<()> = Mutex::new(());
 
 /// 内部使用：应用效果，返回成功屏幕数。
 fn apply_inner(settings: &Settings) -> usize {
+    // 保存进程内快照：息屏/显示重启后由监听线程原样重应用
+    crate::settings::set_current(settings);
     let _guard = GAMMA_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     #[cfg(target_os = "windows")]

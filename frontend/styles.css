@@ -283,6 +283,18 @@ input[type="range"].temp-range {
 .modal-card h2 { font-size: 17px; font-weight: 680; }
 .modal-version { margin-top: 8px; font-size: 13px; font-weight: 640; color: var(--green); }
 .modal-desc { margin-top: 10px; font-size: 12px; line-height: 1.7; color: var(--text-2); }
+.modal-notes {
+  margin-top: 10px; max-height: 116px; overflow-y: auto; text-align: left;
+  font-size: 11.5px; line-height: 1.6; color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word; user-select: text;
+}
+.modal-notes::-webkit-scrollbar { display: none; }
+.modal-more {
+  display: none; margin: 8px auto 0; padding: 0; border: 0; background: none;
+  font-size: 11.5px; color: var(--green); text-decoration: underline; text-underline-offset: 2px;
+  cursor: pointer;
+}
+.modal-more:hover { filter: brightness(1.08); }
 .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
 .modal-actions > button { flex: 1; }
 .confirm-card { width: 280px; }

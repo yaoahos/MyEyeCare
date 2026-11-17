@@ -1,6 +1,6 @@
 [package]
 name = "myeyecare"
-version = "1.0.0"
+version = "1.0.1"
 description = "轻量级护眼工具"
 authors = ["MyEyeCare"]
 edition = "2021"

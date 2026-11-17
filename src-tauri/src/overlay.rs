@@ -73,9 +73,14 @@ mod win {
     pub const LWA_ALPHA: u32 = 0x0000_0002;
     pub const SW_HIDE: i32 = 0;
     pub const SW_SHOW: i32 = 5;
+    pub const SWP_NOSIZE: u32 = 0x0001;
+    pub const SWP_NOMOVE: u32 = 0x0002;
+    pub const SWP_NOACTIVATE: u32 = 0x0010;
     pub const WM_PAINT: u32 = 0x000F;
     pub const WM_ERASEBKGND: u32 = 0x0014;
     pub const WM_QUIT: u32 = 0x0012;
+    pub const WM_DISPLAYCHANGE: u32 = 0x007E;
+    pub const WM_DPICHANGED: u32 = 0x02E0;
     pub const WM_APP: u32 = 0x8000;
     /// 更新颜色与透明度：wparam=COLORREF, lparam=alpha
     pub const WM_MEC_TINT: u32 = WM_APP + 1;
@@ -83,6 +88,13 @@ mod win {
     pub const WM_MEC_VISIBLE: u32 = WM_APP + 2;
     /// 结束窗口线程
     pub const WM_MEC_QUIT: u32 = WM_APP + 3;
+    /// 显示恢复后重新同步几何、层级、颜色与可见性
+    pub const WM_MEC_REFRESH: u32 = WM_APP + 4;
+
+    #[inline]
+    pub fn hwnd_topmost() -> Hwnd {
+        -1isize as Hwnd
+    }
 
     // 虚拟桌面范围（覆盖多显示器）
     pub const SM_XVIRTUALSCREEN: i32 = 76;
@@ -108,6 +120,15 @@ mod win {
             param: *mut c_void,
         ) -> Hwnd;
         pub fn ShowWindow(hwnd: Hwnd, cmd: i32) -> c_int;
+        pub fn SetWindowPos(
+            hwnd: Hwnd,
+            insert_after: Hwnd,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> c_int;
         pub fn SetLayeredWindowAttributes(hwnd: Hwnd, key: u32, alpha: c_uchar, flags: u32) -> c_int;
         pub fn InvalidateRect(hwnd: Hwnd, rect: *const Rect, erase: c_int) -> c_int;
         pub fn PostMessageW(hwnd: Hwnd, msg: u32, wparam: usize, lparam: isize) -> c_int;
@@ -142,6 +163,40 @@ static DESIRED_ALPHA: AtomicU32 = AtomicU32::new(0);
 #[cfg(target_os = "windows")]
 static DESIRED_SHOW: AtomicU32 = AtomicU32::new(0);
 
+/// 把期望状态完整同步到窗口：几何、置顶、颜色、透明度、可见性。
+/// 创建时和显示恢复后都走这里，避免两处逻辑漂移。
+#[cfg(target_os = "windows")]
+unsafe fn sync_window(hwnd: win::Hwnd) {
+    let x = win::GetSystemMetrics(win::SM_XVIRTUALSCREEN);
+    let y = win::GetSystemMetrics(win::SM_YVIRTUALSCREEN);
+    let width = win::GetSystemMetrics(win::SM_CXVIRTUALSCREEN);
+    let height = win::GetSystemMetrics(win::SM_CYVIRTUALSCREEN);
+    win::SetWindowPos(
+        hwnd,
+        win::hwnd_topmost(),
+        x,
+        y,
+        width,
+        height,
+        win::SWP_NOACTIVATE,
+    );
+    let alpha = DESIRED_ALPHA.load(Ordering::SeqCst) as u8;
+    win::SetLayeredWindowAttributes(hwnd, 0, alpha, win::LWA_ALPHA);
+    let show = DESIRED_SHOW.load(Ordering::SeqCst) != 0;
+    win::ShowWindow(hwnd, if show { win::SW_SHOW } else { win::SW_HIDE });
+    // 显示恢复后某些窗口会被压到普通窗口下面，再置顶一次
+    win::SetWindowPos(
+        hwnd,
+        win::hwnd_topmost(),
+        0,
+        0,
+        0,
+        0,
+        win::SWP_NOMOVE | win::SWP_NOSIZE | win::SWP_NOACTIVATE,
+    );
+    win::InvalidateRect(hwnd, std::ptr::null(), 0);
+}
+
 #[cfg(target_os = "windows")]
 extern "system" fn overlay_proc(
     hwnd: win::Hwnd,
@@ -168,6 +223,10 @@ extern "system" fn overlay_proc(
                         win::SW_HIDE
                     },
                 );
+                0
+            }
+            win::WM_MEC_REFRESH | win::WM_DISPLAYCHANGE | win::WM_DPICHANGED => {
+                sync_window(hwnd);
                 0
             }
             win::WM_MEC_QUIT => {
@@ -240,14 +299,8 @@ fn overlay_thread() {
             return;
         }
         OVERLAY_HWND.store(hwnd as isize, Ordering::SeqCst);
-        // 应用线程就绪前已写入的期望状态
-        let alpha = DESIRED_ALPHA.load(Ordering::SeqCst) as u8;
-        let show = DESIRED_SHOW.load(Ordering::SeqCst) != 0;
-        win::SetLayeredWindowAttributes(hwnd, 0, alpha, win::LWA_ALPHA);
-        if show {
-            win::ShowWindow(hwnd, win::SW_SHOW);
-        }
-        win::InvalidateRect(hwnd, std::ptr::null(), 0);
+        // 应用线程就绪前已写入的期望状态，统一由 sync_window 落地
+        sync_window(hwnd);
 
         let mut msg: win::Msg = std::mem::zeroed();
         while win::GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
@@ -329,6 +382,19 @@ pub fn apply(settings: &Settings) {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = settings;
+    }
+}
+
+/// 显示恢复后通知窗口线程重新同步几何、层级与颜色，避免跨线程直接操作窗口。
+pub fn refresh() {
+    #[cfg(target_os = "windows")]
+    {
+        let hwnd = OVERLAY_HWND.load(Ordering::SeqCst);
+        if hwnd != 0 {
+            unsafe {
+                win::PostMessageW(hwnd as win::Hwnd, win::WM_MEC_REFRESH, 0, 0);
+            }
+        }
     }
 }
 

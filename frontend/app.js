@@ -2,7 +2,8 @@
 
 // 检查更新与更新日志指向同一开源仓库
 const UPDATE_REPO = "yaoahos/MyEyeCare";
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.0.1";
+const UPDATE_NOTES_LIMIT = 120; // 弹窗内更新日志最大字符数，超出则截断并给出"查看更多"
 
 const $ = (selector) => document.querySelector(selector);
 const invoke = (cmd, args = {}) => {
@@ -395,6 +396,11 @@ function bindEvents() {
       .catch((e) => toast(e, true));
   });
 
+  $("#modalMore").addEventListener("click", () => {
+    if (latestRelease && latestRelease.html_url) {
+      invoke("open_external", { url: latestRelease.html_url }).catch((e) => toast(e, true));
+    }
+  });
   $("#btnLater").addEventListener("click", () => $("#updateModal").classList.remove("show"));
   $("#btnDownload").addEventListener("click", () => {
     if (latestRelease && latestRelease.html_url) {
@@ -405,6 +411,45 @@ function bindEvents() {
 }
 
 /* ---------- 检查更新 ---------- */
+// GitHub release body 是 Markdown，这里转成弹窗里可读的纯文本
+function releaseNotesToText(body) {
+  if (!body || typeof body !== "string") return "";
+  return body
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")        // 图片
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")     // 链接保留显示文字
+    .replace(/^\s{0,3}#{1,6}\s*/gm, "")          // 标题符号
+    .replace(/\*\*|__|`/g, "")                   // 加粗 / 行内代码
+    .replace(/^\s*[-*+]\s+/gm, "· ")             // 列表项
+    .split("\n")
+    .map((line) => line.replace(/\s+$/g, ""))
+    .filter((line, i, arr) => line || (i > 0 && arr[i - 1])) // 合并连续空行
+    .join("\n")
+    .trim();
+}
+
+// 弹窗显示真实更新日志；过长则截断并显示"查看更多"
+function renderUpdateNotes(release) {
+  const notes = $("#modalNotes");
+  const more = $("#modalMore");
+  const text = releaseNotesToText(release && release.body);
+  if (!text) {
+    notes.textContent = "新版本已发布，包含体验优化与问题修复。建议更新以获得更好的护眼体验。";
+    more.style.display = "none";
+    return;
+  }
+  if (text.length > UPDATE_NOTES_LIMIT) {
+    let cut = text.slice(0, UPDATE_NOTES_LIMIT);
+    // 优先在行末或句读处收尾，避免截断在半个句子中间
+    const lastBreak = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf("。"), cut.lastIndexOf("；"));
+    if (lastBreak > UPDATE_NOTES_LIMIT * 0.6) cut = cut.slice(0, lastBreak + 1);
+    notes.textContent = `${cut.trimEnd()}…`;
+    more.style.display = "block";
+  } else {
+    notes.textContent = text;
+    more.style.display = "none";
+  }
+}
+
 function compareVersion(a, b) {
   const pa = String(a).replace(/^v/i, "").split(".").map(Number);
   const pb = String(b).split(".").map(Number);
@@ -441,6 +486,7 @@ async function checkUpdate(isStartup) {
     }
     if (isStartup && compareVersion(latest, APP_VERSION) > 0) {
       $("#modalVersion").textContent = latest;
+      renderUpdateNotes(release);
       $("#updateModal").classList.add("show");
     }
   } catch (error) {

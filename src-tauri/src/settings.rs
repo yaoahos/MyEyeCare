@@ -1,6 +1,20 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
+
+/// 当前生效配置的进程内快照，供显示状态监听线程在息屏恢复后重应用。
+static CURRENT: Mutex<Option<Settings>> = Mutex::new(None);
+
+pub fn set_current(settings: &Settings) {
+    if let Ok(mut guard) = CURRENT.lock() {
+        *guard = Some(settings.clone());
+    }
+}
+
+pub fn current() -> Option<Settings> {
+    CURRENT.lock().ok().and_then(|guard| guard.clone())
+}
 
 /// 用户自定义护眼模板（最多保存 3 个）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,5 +122,7 @@ pub fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Strin
         settings.custom_templates.truncate(3);
     }
     let text = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(config_path(&app), text).map_err(|e| e.to_string())
+    std::fs::write(config_path(&app), text).map_err(|e| e.to_string())?;
+    set_current(&settings);
+    Ok(())
 }

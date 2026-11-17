@@ -1,4 +1,5 @@
 mod autostart;
+mod display;
 mod gamma;
 mod overlay;
 mod settings;
@@ -108,8 +109,10 @@ pub fn run() {
 
             // 先写入期望状态，再启动色罩窗口线程，避免启动时序竞态
             overlay::init();
-            // 恢复上次的护眼效果（gamma + 色罩）
+            // 恢复上次的护眼效果（gamma + 色罩），并保存进程内快照
             gamma::apply(&settings);
+            // 监听息屏唤醒与显示变化，自动重应用上面的配置
+            display::init();
 
             tray::setup(app)?;
 
@@ -137,6 +140,7 @@ pub fn run() {
     app.run(|_app, event| {
         // 无论从托盘还是窗口退出，都恢复原始 gamma 并关闭色罩
         if let tauri::RunEvent::Exit = event {
+            display::shutdown();
             gamma::reset();
             overlay::shutdown();
         }
