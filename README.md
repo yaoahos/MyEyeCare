@@ -135,7 +135,7 @@ npm run build            # 构建 NSIS 中文安装包
 npm run build:portable   # 构建绿色单文件版
 ```
 
-构建产物位于 `src-tauri/target/release/`，安装包在 `bundle/nsis/` 子目录。Tauri 自动生成的原始文件名与分发名不同（安装包原始名以小写 `-setup.exe` 结尾，单文件程序原始名为 `MyEyeCare.exe`），发布时统一重命名为：
+构建产物位于 `src-tauri/target/release/`，安装包在 `bundle/nsis/` 子目录。发布文件统一命名为：
 
 ```text
 MyEyeCare_1.0.0_x64-Setup.exe      安装包，双击安装
