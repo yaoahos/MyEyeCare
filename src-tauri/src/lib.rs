@@ -2,8 +2,10 @@ mod autostart;
 mod display;
 mod gamma;
 mod overlay;
+mod schedule;
 mod settings;
 mod tray;
+mod updater;
 
 use tauri::{AppHandle, Manager};
 
@@ -16,14 +18,32 @@ fn close_main_window(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// 唤起并显示主窗口：用于启动检查到更新时，让托盘状态下的提醒弹窗可见。
-#[tauri::command]
-fn show_main_window(app: AppHandle) -> Result<(), String> {
+/// 显示主窗口并清除 DOM 焦点残留。
+/// 隐藏前焦点停在右上角关闭按钮，直接 show 会让该按钮保持“被选中”高亮。
+/// 延迟一帧 blur 掉 activeElement，保证焦点落到页面而不是某个按钮。
+pub(crate) fn show_and_clear_focus(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
     window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())
+    window.set_focus().map_err(|e| e.to_string())?;
+    // 从托盘恢复后焦点可能残留在右上角关闭按钮上，呈现“被选中”高亮。
+    // 单帧 setTimeout 太早（WebView 焦点恢复晚于它），改为双帧 + 定时兜底，并显式 blur 关闭按钮。
+    let clear_js = "\
+(function(){\
+  function clear(){var a=document.activeElement;if(a&&a!==document.body&&typeof a.blur==='function'){a.blur();}}\
+  var b=document.getElementById('btnClose');if(b&&typeof b.blur==='function'){b.blur();}\
+  requestAnimationFrame(function(){clear();requestAnimationFrame(clear);});\
+  setTimeout(clear,60);\
+})();";
+    let _ = window.eval(clear_js);
+    Ok(())
+}
+
+/// 唤起并显示主窗口：用于启动检查到更新时，让托盘状态下的提醒弹窗可见。
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    show_and_clear_focus(&app)
 }
 
 /// 绿色单文件版标识：前端据此隐藏开机自启，避免注册表写入。
@@ -108,6 +128,13 @@ pub fn run() {
             show_main_window,
             is_portable,
             open_external,
+            updater::check_update,
+            updater::update_download_and_install,
+            schedule::set_manual_override,
+            schedule::get_effective_settings,
+            schedule::set_schedule_enabled,
+            schedule::set_schedule_config,
+            schedule::get_schedule_curve,
         ])
         .setup(|app| {
             let settings = settings::load_from(&app.handle());
@@ -120,9 +147,13 @@ pub fn run() {
 
             // 先写入期望状态，再启动色罩窗口线程，避免启动时序竞态
             overlay::init();
-            // 恢复上次的护眼效果（gamma + 色罩），并保存进程内快照
+            // 恢复上次的护眼效果：先存用户配置快照，再按“此刻生效值”应用
             gamma::apply(&settings);
-            // 监听息屏唤醒与显示变化，自动重应用上面的配置
+            schedule::set_override_until(settings.manual_override_until);
+            let eff = schedule::effective(&settings);
+            gamma::apply_effective(&eff);
+            // 启动日程调度线程 + 显示变化监听（重启后按当前时间/状态重应用）
+            schedule::init();
             display::init();
 
             tray::setup(app)?;

@@ -50,6 +50,75 @@
             <button class="switch" id="masterSwitch" role="switch" aria-checked="true"><span></span></button>
           </div>
 
+          <!-- 自动日程：昼夜两态（参考 LightBulb），曲线只读展示 -->
+          <div class="card schedule-card" id="scheduleCard">
+            <div class="schedule-head">
+              <div class="schedule-title">
+                <strong>自动日程</strong>
+                <span id="scheduleStatus">按时间自动调节色温与亮度</span>
+              </div>
+              <button class="switch small" id="scheduleSwitch" role="switch" aria-checked="false"><span></span></button>
+            </div>
+
+            <div class="schedule-body">
+              <!-- 左：昼夜两组参数 -->
+              <div class="schedule-params">
+                <div class="phase-row day">
+                  <span class="phase-label"><i class="phase-dot"></i>白天</span>
+                  <label class="phase-field"><span>色温</span><input type="number" id="dayTempInput" min="2700" max="7000" step="50" /><em>K</em></label>
+                  <label class="phase-field"><span>亮度</span><input type="number" id="dayBrightInput" min="10" max="100" step="1" /><em>%</em></label>
+                </div>
+                <div class="phase-row night">
+                  <span class="phase-label"><i class="phase-dot"></i>夜晚</span>
+                  <label class="phase-field"><span>色温</span><input type="number" id="nightTempInput" min="2700" max="7000" step="50" /><em>K</em></label>
+                  <label class="phase-field"><span>亮度</span><input type="number" id="nightBrightInput" min="10" max="100" step="1" /><em>%</em></label>
+                </div>
+                <div class="phase-times">
+                  <label>日出 <input type="time" id="sunriseInput" /></label>
+                  <label>日落 <input type="time" id="sunsetInput" /></label>
+                  <label>过渡 <input type="number" id="transitionInput" min="0" max="180" step="5" /><em>分</em></label>
+                </div>
+              </div>
+
+              <!-- 右：只读曲线 -->
+              <div class="schedule-preview">
+                <div class="schedule-legend">
+                  <span class="legend-item"><i class="legend-dot temp"></i>色温</span>
+                  <span class="legend-item"><i class="legend-dot bright"></i>亮度</span>
+                  <span class="legend-hint">曲线随参数自动更新</span>
+                </div>
+                <div class="schedule-chart" id="scheduleChart">
+                  <svg id="scheduleSvg" viewBox="0 0 600 120" preserveAspectRatio="none" aria-hidden="true">
+                    <defs>
+                      <linearGradient id="schedTempFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#f0b96a" stop-opacity="0.30" />
+                        <stop offset="100%" stop-color="#f0b96a" stop-opacity="0.03" />
+                      </linearGradient>
+                      <linearGradient id="schedBrightFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#57bd88" stop-opacity="0.28" />
+                        <stop offset="100%" stop-color="#57bd88" stop-opacity="0.03" />
+                      </linearGradient>
+                    </defs>
+                    <g id="schedLinks" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.6"></g>
+                    <path id="schedTempArea" fill="url(#schedTempFill)" stroke="none" />
+                    <path id="schedTempLine" fill="none" stroke="#e0a458" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+                    <path id="schedBrightArea" fill="url(#schedBrightFill)" stroke="none" />
+                    <path id="schedBrightLine" fill="none" stroke="#2f9e6b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+                    <line id="schedNow" y1="0" y2="120" stroke="#2f9e6b" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7" />
+                  </svg>
+                </div>
+                <div class="schedule-axis" id="scheduleAxis"></div>
+              </div>
+            </div>
+
+            <div class="schedule-actions">
+              <button class="text-btn" id="btnSchedulePreset">恢复默认</button>
+              <button class="text-btn" id="btnRestoreAuto" style="display:none;">恢复自动</button>
+              <span class="sched-selected" id="schedSelected"></span>
+              <span class="schedule-now" id="scheduleNowText"></span>
+            </div>
+          </div>
+
           <div class="adjust-grid">
             <div class="control-col">
               <div class="card control-card">
@@ -61,9 +130,9 @@
                     </svg>
                   </div>
                   <div class="control-title"><strong>屏幕亮度</strong></div>
-                  <div class="control-value" id="brightnessValue">100%</div>
+                  <div class="control-value" id="brightnessValue">92%</div>
                 </div>
-                <input type="range" id="brightnessRange" min="30" max="100" step="1" value="100" />
+                <input type="range" id="brightnessRange" min="30" max="100" step="1" value="92" />
                 <div class="range-labels"><span>30% 柔和</span><span>100% 标准</span></div>
               </div>
 
@@ -76,10 +145,26 @@
                     </svg>
                   </div>
                   <div class="control-title"><strong>色温调节</strong></div>
-                  <div class="control-value" id="temperatureValue">5800 K</div>
+                  <div class="control-value" id="temperatureValue">5000 K</div>
                 </div>
-                <input type="range" class="temp-range" id="temperatureRange" min="2700" max="6500" step="50" value="5800" />
+                <input type="range" class="temp-range" id="temperatureRange" min="2700" max="6500" step="50" value="5000" />
                 <div class="range-labels"><span>2700K 暖黄</span><span>6500K 冷白</span></div>
+              </div>
+
+              <!-- 柔和度：gamma 层抬黑位 + 中段压缩，降低对比度且文字不发灰 -->
+              <div class="card control-card">
+                <div class="control-head">
+                  <div class="control-icon soft">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 17c3-6 6-9 9-9s6 3 9 9" />
+                      <path d="M3 20h18" />
+                    </svg>
+                  </div>
+                  <div class="control-title"><strong>柔和度</strong></div>
+                  <div class="control-value" id="softnessValue">45%</div>
+                </div>
+                <input type="range" id="softnessRange" min="0" max="100" step="1" value="45" />
+                <div class="range-labels"><span>0% 清晰</span><span>100% 柔和</span></div>
               </div>
 
               <!-- 独立遮罩调节卡片 -->
@@ -98,8 +183,8 @@
                   <div class="color-swatches" id="colorSwatches"></div>
                   <div class="strength-line">
                     <span>强度</span>
-                    <input type="range" id="strengthRange" min="0" max="100" step="1" value="5" />
-                    <b id="strengthValue">5%</b>
+                    <input type="range" id="strengthRange" min="0" max="100" step="1" value="12" />
+                    <b id="strengthValue">12%</b>
                   </div>
                 </div>
               </div>
@@ -205,9 +290,10 @@
       <p class="modal-version" id="modalVersion">v0.3.0</p>
       <div class="modal-notes" id="modalNotes">新版本已发布，包含体验优化与问题修复。建议更新以获得更好的护眼体验。</div>
       <button class="modal-more" id="modalMore" style="display: none;">查看完整更新日志 →</button>
+      <div class="modal-error" id="updateError" style="display: none;"></div>
       <div class="modal-actions">
         <button class="secondary-btn" id="btnLater">稍后再说</button>
-        <button class="primary-btn" id="btnDownload">前往下载</button>
+        <button class="primary-btn" id="btnDownload">立即更新</button>
       </div>
     </div>
   </div>

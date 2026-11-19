@@ -1,6 +1,6 @@
 [package]
 name = "myeyecare"
-version = "1.0.1"
+version = "1.0.2"
 description = "轻量级护眼工具"
 authors = ["MyEyeCare"]
 edition = "2021"
@@ -21,6 +21,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 软件内自更新：下载 GitHub Release 安装包并启动安装（配置对齐 SafePasswordDesktop，默认 TLS 走系统 schannel）
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["time", "macros", "rt-multi-thread", "sync"] }
 
 [profile.release]
 opt-level = "z"          # 优先压缩体积

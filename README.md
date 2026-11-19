@@ -4,10 +4,10 @@ MyEyeCare 是一个轻量级的 Windows 护眼小工具。它通过亮度、色�
 
 - 项目名：`MyEyeCare`
 - 应用标识：`com.yaoahos.myeyecare`
-- 当前版本：`1.0.1`
+- 当前版本：`1.0.2`
 - 支持平台：Windows 10 / 11（x64，需要 WebView2 运行时）
-- 安装包：`MyEyeCare_1.0.1_x64-Setup.exe`（NSIS，简体中文界面）
-- 绿色版：`MyEyeCare_1.0.1_x64-Portable.exe`（免安装单文件）
+- 安装包：`MyEyeCare_1.0.2_x64-Setup.exe`（NSIS，简体中文界面）
+- 绿色版：`MyEyeCare_1.0.2_x64-Portable.exe`（免安装单文件）
 - 发布下载：[Releases](https://github.com/yaoahos/MyEyeCare/releases)
 
 ---
@@ -90,7 +90,7 @@ MyEyeCare 面向长时间面对屏幕的用户，重点是把常用护眼操作�
 
 **安装版**
 
-1. 下载 `MyEyeCare_1.0.1_x64-Setup.exe`，双击安装。
+1. 下载 `MyEyeCare_1.0.2_x64-Setup.exe`，双击安装。
 2. 安装界面为简体中文，默认按当前用户安装。
 3. 首次启动默认开启护眼效果、开机自启、启动最小化与启动检查更新，可在设置页调整。
 4. 程序设置与运行数据保存在 `<安装目录>\data\`，不需要写入 `%APPDATA%`。
@@ -98,7 +98,7 @@ MyEyeCare 面向长时间面对屏幕的用户，重点是把常用护眼操作�
 
 **绿色单文件版**
 
-1. 下载 `MyEyeCare_1.0.1_x64-Portable.exe`，放到任意可写目录后双击运行。
+1. 下载 `MyEyeCare_1.0.2_x64-Portable.exe`，放到任意可写目录后双击运行。
 2. 不写注册表开机自启，设置页隐藏对应开关。
 3. 数据与运行文件放在 exe 同目录的 `data\`，删除 exe 与 `data\` 即完成清理。
 
@@ -138,8 +138,8 @@ npm run build:portable   # 构建绿色单文件版
 构建产物位于 `src-tauri/target/release/`，安装包在 `bundle/nsis/` 子目录。发布文件统一命名为：
 
 ```text
-MyEyeCare_1.0.1_x64-Setup.exe      安装包，双击安装
-MyEyeCare_1.0.1_x64-Portable.exe   绿色单文件版，双击即用
+MyEyeCare_1.0.2_x64-Setup.exe      安装包，双击安装
+MyEyeCare_1.0.2_x64-Portable.exe   绿色单文件版，双击即用
 ```
 
 若构建时显式指定目标（`--target x86_64-pc-windows-msvc`），产物路径会多一层 `x86_64-pc-windows-msvc/`，文件名不变。
@@ -165,6 +165,15 @@ MyEyeCare 不上传使用数据，不采集信息，不接入统计与广告 SDK
 ---
 
 ## 八、版本记录
+
+**2026/11/20 · 1.0.2**
+
+- 自动日程改为昼夜两态，可设白天与夜晚的色温亮度及过渡时长
+- 新增柔和度调节，降低屏幕刺眼感
+- 支持软件内更新，无需跳转浏览器
+- 修复部分场景屏幕闪烁
+- 修复从托盘恢复窗口时右上角关闭按钮残留高亮
+- 字体放大加深，界面布局更舒展
 
 **2026/11/18 · 1.0.1**
 

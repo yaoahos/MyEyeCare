@@ -5,6 +5,12 @@ src-tauri/target/
 
 # 交付物（发布时单独上传，不纳入源码仓库）
 release/
+MyEyeCare_*_x64-Setup.exe
+MyEyeCare_*_x64-Portable.exe
+MyEyeCare_测试_*.exe
+
+# 应用运行时数据：WebView 缓存、浏览数据、用户配置（含隐私，绝不入库）
+data/
 
 # 系统 / 编辑器 / 备份 / 日志
 .DS_Store
@@ -27,3 +33,16 @@ frontend/_preview_*.html
 *.pfx
 *.snk
 *.cer
+*.crt
+*.p12
+*.jks
+credentials*.json
+*token*.json
+*secret*.json
+
+# 浏览器/用户数据、本地数据库（可能含隐私）
+EBWebView/
+*.sqlite
+*.sqlite-wal
+*.db
+*.db-wal

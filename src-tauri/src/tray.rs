@@ -19,10 +19,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
             let id = event.id().0.clone();
             match id.as_str() {
                 "show" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    let _ = crate::show_and_clear_focus(app);
                 }
                 "quit" => {
                     crate::gamma::reset();
@@ -43,8 +40,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
                     if window.is_visible().unwrap_or(false) {
                         let _ = window.hide();
                     } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        let _ = crate::show_and_clear_focus(app);
                     }
                 }
             }

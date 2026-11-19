@@ -152,16 +152,28 @@ mod win {
     }
 }
 
-// 当前填充色（COLORREF = 0x00BBGGRR）与窗口句柄（跨线程共享）
+// CURRENT_COLOR 只由窗口线程维护，表示“已经真正画到窗口上的颜色”，是幂等判断的唯一依据。
+// DESIRED_* 由任意线程写入，表示“期望状态”，供窗口线程就绪前的启动时序使用。
+// 关键：apply 绝不能提前改 CURRENT_COLOR，否则窗口过程比较时永远相等、颜色变化不生效。
 #[cfg(target_os = "windows")]
 static CURRENT_COLOR: AtomicU32 = AtomicU32::new(0x0060_B0FF);
 #[cfg(target_os = "windows")]
 static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
-// 期望状态：窗口线程就绪前也能写入，解决启动时序竞态
+#[cfg(target_os = "windows")]
+static DESIRED_COLOR: AtomicU32 = AtomicU32::new(0x0060_B0FF);
 #[cfg(target_os = "windows")]
 static DESIRED_ALPHA: AtomicU32 = AtomicU32::new(0);
 #[cfg(target_os = "windows")]
 static DESIRED_SHOW: AtomicU32 = AtomicU32::new(0);
+// 已实际落到窗口的状态：用于幂等判断，避免重复 ShowWindow/重绘造成闪烁。
+// u32::MAX 表示“尚未落地”，首次同步必定执行。
+#[cfg(target_os = "windows")]
+static APPLIED_ALPHA: AtomicU32 = AtomicU32::new(u32::MAX);
+#[cfg(target_os = "windows")]
+static APPLIED_SHOW: AtomicU32 = AtomicU32::new(u32::MAX);
+// 窗口几何缓存 (x, y, w, h)，避免每次 refresh 都 SetWindowPos
+#[cfg(target_os = "windows")]
+static APPLIED_GEOM: std::sync::Mutex<(i32, i32, i32, i32)> = std::sync::Mutex::new((i32::MIN, i32::MIN, i32::MIN, i32::MIN));
 
 /// 把期望状态完整同步到窗口：几何、置顶、颜色、透明度、可见性。
 /// 创建时和显示恢复后都走这里，避免两处逻辑漂移。
@@ -171,29 +183,58 @@ unsafe fn sync_window(hwnd: win::Hwnd) {
     let y = win::GetSystemMetrics(win::SM_YVIRTUALSCREEN);
     let width = win::GetSystemMetrics(win::SM_CXVIRTUALSCREEN);
     let height = win::GetSystemMetrics(win::SM_CYVIRTUALSCREEN);
-    win::SetWindowPos(
-        hwnd,
-        win::hwnd_topmost(),
-        x,
-        y,
-        width,
-        height,
-        win::SWP_NOACTIVATE,
-    );
+
     let alpha = DESIRED_ALPHA.load(Ordering::SeqCst) as u8;
-    win::SetLayeredWindowAttributes(hwnd, 0, alpha, win::LWA_ALPHA);
     let show = DESIRED_SHOW.load(Ordering::SeqCst) != 0;
-    win::ShowWindow(hwnd, if show { win::SW_SHOW } else { win::SW_HIDE });
-    // 显示恢复后某些窗口会被压到普通窗口下面，再置顶一次
-    win::SetWindowPos(
-        hwnd,
-        win::hwnd_topmost(),
-        0,
-        0,
-        0,
-        0,
-        win::SWP_NOMOVE | win::SWP_NOSIZE | win::SWP_NOACTIVATE,
-    );
+
+    // 全部状态都没变：什么都不做。这是消除拖动/切换时闪烁的核心。
+    let geom_unchanged = APPLIED_GEOM
+        .lock()
+        .map(|g| *g == (x, y, width, height))
+        .unwrap_or(false);
+    if geom_unchanged
+        && APPLIED_ALPHA.load(Ordering::SeqCst) == alpha as u32
+        && APPLIED_SHOW.load(Ordering::SeqCst) == if show { 1 } else { 0 }
+    {
+        return;
+    }
+
+    // 几何变化才 SetWindowPos
+    if !geom_unchanged {
+        win::SetWindowPos(
+            hwnd,
+            win::hwnd_topmost(),
+            x,
+            y,
+            width,
+            height,
+            win::SWP_NOACTIVATE,
+        );
+        if let Ok(mut g) = APPLIED_GEOM.lock() {
+            *g = (x, y, width, height);
+        }
+    }
+    // 透明度变化才改
+    if APPLIED_ALPHA.load(Ordering::SeqCst) != alpha as u32 {
+        win::SetLayeredWindowAttributes(hwnd, 0, alpha, win::LWA_ALPHA);
+        APPLIED_ALPHA.store(alpha as u32, Ordering::SeqCst);
+    }
+    // 可见性变化才 ShowWindow；显示时再置顶一次（避免被压到底层）
+    if APPLIED_SHOW.load(Ordering::SeqCst) != if show { 1 } else { 0 } {
+        win::ShowWindow(hwnd, if show { win::SW_SHOW } else { win::SW_HIDE });
+        APPLIED_SHOW.store(if show { 1 } else { 0 }, Ordering::SeqCst);
+        if show {
+            win::SetWindowPos(
+                hwnd,
+                win::hwnd_topmost(),
+                0,
+                0,
+                0,
+                0,
+                win::SWP_NOMOVE | win::SWP_NOSIZE | win::SWP_NOACTIVATE,
+            );
+        }
+    }
     win::InvalidateRect(hwnd, std::ptr::null(), 0);
 }
 
@@ -209,20 +250,42 @@ extern "system" fn overlay_proc(
             win::WM_MEC_TINT => {
                 let color = wparam as u32;
                 let alpha = lparam as u8;
+                let color_changed = CURRENT_COLOR.load(Ordering::Relaxed) != color;
+                let alpha_changed = APPLIED_ALPHA.load(Ordering::SeqCst) != alpha as u32;
+                if !color_changed && !alpha_changed {
+                    return 0; // 幂等：颜色与透明度都没变，跳过重绘
+                }
                 CURRENT_COLOR.store(color, Ordering::Relaxed);
-                win::SetLayeredWindowAttributes(hwnd, 0, alpha, win::LWA_ALPHA);
-                win::InvalidateRect(hwnd, std::ptr::null(), 0);
+                DESIRED_COLOR.store(color, Ordering::SeqCst);
+                if alpha_changed {
+                    win::SetLayeredWindowAttributes(hwnd, 0, alpha, win::LWA_ALPHA);
+                    APPLIED_ALPHA.store(alpha as u32, Ordering::SeqCst);
+                    DESIRED_ALPHA.store(alpha as u32, Ordering::SeqCst);
+                }
+                if color_changed {
+                    win::InvalidateRect(hwnd, std::ptr::null(), 0);
+                }
                 0
             }
             win::WM_MEC_VISIBLE => {
-                win::ShowWindow(
-                    hwnd,
-                    if wparam != 0 {
-                        win::SW_SHOW
-                    } else {
-                        win::SW_HIDE
-                    },
-                );
+                let show = if wparam != 0 { 1 } else { 0 };
+                if APPLIED_SHOW.load(Ordering::SeqCst) == show {
+                    return 0; // 幂等：可见性没变
+                }
+                win::ShowWindow(hwnd, if show != 0 { win::SW_SHOW } else { win::SW_HIDE });
+                APPLIED_SHOW.store(show, Ordering::SeqCst);
+                DESIRED_SHOW.store(show, Ordering::SeqCst);
+                if show != 0 {
+                    win::SetWindowPos(
+                        hwnd,
+                        win::hwnd_topmost(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        win::SWP_NOMOVE | win::SWP_NOSIZE | win::SWP_NOACTIVATE,
+                    );
+                }
                 0
             }
             win::WM_MEC_REFRESH | win::WM_DISPLAYCHANGE | win::WM_DPICHANGED => {
@@ -299,6 +362,8 @@ fn overlay_thread() {
             return;
         }
         OVERLAY_HWND.store(hwnd as isize, Ordering::SeqCst);
+        // 用期望颜色初始化首帧，避免启动瞬间闪一下硬编码默认色
+        CURRENT_COLOR.store(DESIRED_COLOR.load(Ordering::SeqCst), Ordering::Relaxed);
         // 应用线程就绪前已写入的期望状态，统一由 sync_window 落地
         sync_window(hwnd);
 
@@ -355,8 +420,10 @@ pub fn apply(settings: &Settings) {
         // 用户选择的柔色（#RRGGBB），最大不透明度约 28%，避免画面失真
         let color: u32 = hex_to_colorref(&settings.overlay_color);
         let alpha = if show { (strength * 72.0).round() as u8 } else { 0 };
-        // 无论句柄是否就绪，先写期望状态：窗口线程创建后会自行应用
-        CURRENT_COLOR.store(color, Ordering::Relaxed);
+        // 无论句柄是否就绪，先写期望状态：窗口线程创建后会自行应用。
+        // 注意只写 DESIRED_*，绝不动 CURRENT_COLOR —— 后者是窗口线程独享的
+        // “已落地颜色”，提前写会让 TINT 的幂等判断误判为“没变化”而不重绘。
+        DESIRED_COLOR.store(color, Ordering::SeqCst);
         DESIRED_ALPHA.store(alpha as u32, Ordering::SeqCst);
         DESIRED_SHOW.store(if show { 1 } else { 0 }, Ordering::SeqCst);
 

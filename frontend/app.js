@@ -2,7 +2,7 @@
 
 // 检查更新与更新日志指向同一开源仓库
 const UPDATE_REPO = "yaoahos/MyEyeCare";
-const APP_VERSION = "1.0.1";
+const APP_VERSION = "1.0.2";
 const UPDATE_NOTES_LIMIT = 120; // 弹窗内更新日志最大字符数，超出则截断并给出"查看更多"
 
 const $ = (selector) => document.querySelector(selector);
@@ -16,18 +16,19 @@ const invoke = (cmd, args = {}) => {
 };
 
 const DEFAULT_OVERLAY_COLOR = "#8FD6BC";
+const DEFAULT_SOFTNESS = 45;
 const MAX_CUSTOM = 3;
 
-// 每套模板自带遮罩配置，切换时亮度 / 色温 / 遮罩一起生效。
-// 设计原则：按使用场景由日间到深夜递进——色温递减、亮度递减、遮罩递增；
+// 每套模板自带遮罩配置，切换时亮度 / 色温 / 柔和度 / 遮罩一起生效。
+// 设计原则：按使用场景由日间到深夜递进——色温递减、亮度递减、柔和度与遮罩递增；
 // 色卡取各自场景的代表色（蓝→绿→黄→紫→橙→红），一眼即可区分，不与遮罩色混为一谈。
 const TEMPLATES = [
-  { id: "standard",  name: "标准日间", temperature: 5800, brightness: 1.00, swatch: ["#d6ecfb", "#8fc6ea"], overlayEnabled: true,  overlayColor: "#8FD6BC", overlayStrength: 5  },
-  { id: "focus",     name: "专注工作", temperature: 5300, brightness: 0.94, swatch: ["#d4f0df", "#7fd0a8"], overlayEnabled: true,  overlayColor: "#8FD6BC", overlayStrength: 12 },
-  { id: "reading",   name: "阅读模式", temperature: 4800, brightness: 0.88, swatch: ["#fff0c9", "#eccf8c"], overlayEnabled: true,  overlayColor: "#FFD98A", overlayStrength: 18 },
-  { id: "movie",     name: "影院模式", temperature: 4200, brightness: 0.70, swatch: ["#eadffa", "#b9a2e6"], overlayEnabled: true,  overlayColor: "#B6A6E8", overlayStrength: 22 },
-  { id: "night",     name: "夜间护眼", temperature: 3600, brightness: 0.64, swatch: ["#ffdcc0", "#f2a874"], overlayEnabled: true,  overlayColor: "#FFB060", overlayStrength: 30 },
-  { id: "deepnight", name: "深夜模式", temperature: 3000, brightness: 0.50, swatch: ["#f7cfc4", "#dd8b78"], overlayEnabled: true,  overlayColor: "#FF9E80", overlayStrength: 40 },
+  { id: "standard",  name: "标准日间", temperature: 5000, brightness: 0.92, softness: 45, swatch: ["#d6ecfb", "#8fc6ea"], overlayEnabled: true,  overlayColor: "#8FD6BC", overlayStrength: 12 },
+  { id: "focus",     name: "专注工作", temperature: 4800, brightness: 0.90, softness: 50, swatch: ["#d4f0df", "#7fd0a8"], overlayEnabled: true,  overlayColor: "#8FD6BC", overlayStrength: 16 },
+  { id: "reading",   name: "阅读模式", temperature: 4500, brightness: 0.86, softness: 55, swatch: ["#fff0c9", "#eccf8c"], overlayEnabled: true,  overlayColor: "#FFD98A", overlayStrength: 20 },
+  { id: "movie",     name: "影院模式", temperature: 4100, brightness: 0.70, softness: 55, swatch: ["#eadffa", "#b9a2e6"], overlayEnabled: true,  overlayColor: "#B6A6E8", overlayStrength: 24 },
+  { id: "night",     name: "夜间护眼", temperature: 3600, brightness: 0.64, softness: 60, swatch: ["#ffdcc0", "#f2a874"], overlayEnabled: true,  overlayColor: "#FFB060", overlayStrength: 30 },
+  { id: "deepnight", name: "深夜模式", temperature: 3000, brightness: 0.50, softness: 60, swatch: ["#f7cfc4", "#dd8b78"], overlayEnabled: true,  overlayColor: "#FF9E80", overlayStrength: 40 },
 ];
 
 // 柔色遮罩预设（Rust 端按 #RRGGBB 解析为 COLORREF）
@@ -41,17 +42,28 @@ const OVERLAY_COLORS = [
 ];
 
 const state = {
-  brightness: 1,
-  temperature: 5800,
+  brightness: 0.92,
+  temperature: 5000,
+  softness: DEFAULT_SOFTNESS,
   enabled: true,
   autostartEnabled: true,
   startMinimized: true,
   checkUpdatesOnStartup: true,
   templateId: "standard",
   overlayEnabled: true,
-  overlayStrength: 5,
+  overlayStrength: 12,
   overlayColor: DEFAULT_OVERLAY_COLOR,
   customTemplates: [],
+  scheduleEnabled: false,
+  // 昼夜两态日程（参考 LightBulb）：只设两组色温/亮度 + 日出日落 + 过渡时长
+  dayTemperature: 6600,
+  dayBrightness: 1.0,
+  nightTemperature: 3900,
+  nightBrightness: 0.85,
+  sunriseMinute: 7 * 60 + 20,
+  sunsetMinute: 18 * 60 + 30,
+  transitionMinutes: 40,
+  manualOverrideUntil: 0,
 };
 
 let saveTimer = null;
@@ -82,6 +94,7 @@ function matchTemplate() {
   return allTemplates().find((t) =>
     t.temperature === state.temperature
     && Math.abs(t.brightness - state.brightness) < 0.0001
+    && Number(t.softness ?? 0) === Number(state.softness ?? 0)
     && Boolean(t.overlayEnabled) === state.overlayEnabled
     && Number(t.overlayStrength) === state.overlayStrength
     && String(t.overlayColor).toUpperCase() === String(state.overlayColor).toUpperCase()
@@ -123,6 +136,13 @@ function syncUI() {
   tRange.value = state.temperature;
   tRange.style.setProperty("--pct", `${((state.temperature - 2700) / 3800) * 100}%`);
   $("#temperatureValue").textContent = `${state.temperature} K`;
+
+  const softRange = $("#softnessRange");
+  if (softRange) {
+    softRange.value = state.softness;
+    softRange.style.setProperty("--pct", `${state.softness}%`);
+    $("#softnessValue").textContent = `${state.softness}%`;
+  }
 
   const matched = matchTemplate();
   state.templateId = matched ? matched.id : "custom";
@@ -186,10 +206,12 @@ function applyTemplate(id) {
   if (!tpl) return;
   state.temperature = tpl.temperature;
   state.brightness = tpl.brightness;
+  state.softness = typeof tpl.softness === "number" ? tpl.softness : DEFAULT_SOFTNESS;
   state.overlayEnabled = Boolean(tpl.overlayEnabled);
   state.overlayColor = tpl.overlayColor || DEFAULT_OVERLAY_COLOR;
   state.overlayStrength = typeof tpl.overlayStrength === "number" ? tpl.overlayStrength : 18;
   state.enabled = true;
+  markManualOverride();
   syncUI();
   applyNow();
   scheduleSave();
@@ -206,7 +228,7 @@ function openSaveModal() {
     return;
   }
   const mask = state.overlayEnabled ? `遮罩 ${state.overlayStrength}%` : "无遮罩";
-  $("#savePreview").textContent = `当前：${state.temperature} K · ${Math.round(state.brightness * 100)}% · ${mask}`;
+  $("#savePreview").textContent = `当前：${state.temperature} K · ${Math.round(state.brightness * 100)}% · 柔和 ${state.softness}% · ${mask}`;
   $("#templateNameInput").value = "";
   $("#saveModal").classList.add("show");
   setTimeout(() => $("#templateNameInput").focus(), 50);
@@ -225,6 +247,7 @@ function confirmSaveTemplate() {
     name,
     temperature: state.temperature,
     brightness: state.brightness,
+    softness: state.softness,
     overlayEnabled: state.overlayEnabled,
     overlayColor: state.overlayColor,
     overlayStrength: state.overlayStrength,
@@ -261,6 +284,204 @@ function confirmDeleteTemplate() {
   toast("模板已删除");
 }
 
+/* ---------- 自动日程：昼夜两态模型（参考 LightBulb） ----------
+   用户只设「白天」「夜晚」两组色温+亮度，以及日出/日落时刻和过渡时长。
+   曲线是按与后端相同的余弦公式算出来的只读展示，不提供拖拽——
+   参数即数值，从根上消除“点、线、数值对不上”。                    */
+const SCHED_MIN_TEMP = 2700;
+const SCHED_MAX_TEMP = 6500;
+const SCHED_MIN_BRIGHT = 0.1, SCHED_MAX_BRIGHT = 1.0;
+
+// viewBox 600×120：上轨色温 y∈[6,54]，下轨亮度 y∈[66,114]
+const SCHED_TEMP_TOP = 6, SCHED_TEMP_BOT = 54;
+const SCHED_BRIGHT_TOP = 66, SCHED_BRIGHT_BOT = 114;
+
+function schedX(minute) { return (minute / 1440) * 600; }
+function schedTempY(temp) {
+  const t = (temp - SCHED_MIN_TEMP) / (SCHED_MAX_TEMP - SCHED_MIN_TEMP);
+  return SCHED_TEMP_BOT - t * (SCHED_TEMP_BOT - SCHED_TEMP_TOP);
+}
+function schedBrightY(bright) {
+  const t = (bright - SCHED_MIN_BRIGHT) / (SCHED_MAX_BRIGHT - SCHED_MIN_BRIGHT);
+  return SCHED_BRIGHT_BOT - t * (SCHED_BRIGHT_BOT - SCHED_BRIGHT_TOP);
+}
+function padTime(minute) {
+  const m = ((minute % 1440) + 1440) % 1440;
+  const h = Math.floor(m / 60);
+  return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+function currentMinute() {
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+// 与 Rust schedule.rs::interpolate 完全同源的昼夜余弦插值，返回 { temperature, brightness }
+function schedInterpolate(minute) {
+  const half = Math.max(1, state.transitionMinutes / 2);
+  const diff = (center) => {
+    let d = minute - center;
+    if (d >= 720) d -= 1440;
+    if (d < -720) d += 1440;
+    return d;
+  };
+  const sd = diff(state.sunriseMinute);
+  const ed = diff(state.sunsetMinute);
+  let dayRatio;
+  if (Math.abs(sd) < half) {
+    const p = (sd + half) / (2 * half);
+    dayRatio = (1 - Math.cos(Math.PI * p)) / 2;
+  } else if (Math.abs(ed) < half) {
+    const p = (ed + half) / (2 * half);
+    dayRatio = (1 + Math.cos(Math.PI * p)) / 2;
+  } else {
+    const daylight = ((state.sunsetMinute - state.sunriseMinute) % 1440 + 1440) % 1440;
+    const since = ((minute - state.sunriseMinute) % 1440 + 1440) % 1440;
+    dayRatio = since < daylight ? 1 : 0;
+  }
+  return {
+    temperature: Math.round(state.nightTemperature + (state.dayTemperature - state.nightTemperature) * dayRatio),
+    brightness: state.nightBrightness + (state.dayBrightness - state.nightBrightness) * dayRatio,
+  };
+}
+
+// 采样 145 个点画平滑曲线（只读）。曲线值 = 真正生效值，二者同源。
+function renderSchedule() {
+  const set = (id, key, val) => { const el = $(id); if (el) el.setAttribute(key, val); };
+  const minutes = [];
+  for (let m = 0; m <= 1440; m += 3) minutes.push(m);
+  const vals = minutes.map((m) => schedInterpolate(Math.min(m, 1439)));
+
+  const tempLine = minutes.map((m, i) =>
+    `${i === 0 ? "M" : "L"}${schedX(m).toFixed(1)} ${schedTempY(vals[i].temperature).toFixed(1)}`).join(" ");
+  const brightLine = minutes.map((m, i) =>
+    `${i === 0 ? "M" : "L"}${schedX(m).toFixed(1)} ${schedBrightY(vals[i].brightness).toFixed(1)}`).join(" ");
+  set("#schedTempLine", "d", tempLine);
+  set("#schedTempArea", "d", `${tempLine} L600 ${SCHED_TEMP_TOP - 2} L0 ${SCHED_TEMP_TOP - 2} Z`);
+  set("#schedBrightLine", "d", brightLine);
+  set("#schedBrightArea", "d", `${brightLine} L600 120 L0 120 Z`);
+
+  // 日出 / 日落 / 当前时刻三条竖线，颜色与图例一致
+  const links = $("#schedLinks");
+  if (links) {
+    const mark = (m, cls) => `<line class="${cls}" x1="${schedX(m)}" y1="0" x2="${schedX(m)}" y2="120"></line>`;
+    links.innerHTML = mark(state.sunriseMinute, "sunrise") + mark(state.sunsetMinute, "sunset");
+  }
+
+  // 时间轴固定刻度（曲线是连续展示，刻度用整点更易读）
+  const axis = $("#scheduleAxis");
+  if (axis) {
+    axis.innerHTML = [0, 360, 720, 1080, 1440]
+      .map((m) => `<span style="left:${(m / 1440) * 100}%">${padTime(m) === "24:00" ? "24:00" : padTime(m)}</span>`).join("");
+  }
+
+  updateScheduleNow();
+}
+
+// 把 state 中的昼夜参数回填到输入框/数值显示
+function syncScheduleConfigUI() {
+  const put = (id, val) => { const el = $(`#${id}`); if (el) el.value = val; };
+  put("dayTempInput", state.dayTemperature);
+  put("nightTempInput", state.nightTemperature);
+  put("dayBrightInput", Math.round(state.dayBrightness * 100));
+  put("nightBrightInput", Math.round(state.nightBrightness * 100));
+  put("transitionInput", state.transitionMinutes);
+  put("sunriseInput", padTime(state.sunriseMinute));
+  put("sunsetInput", padTime(state.sunsetMinute));
+}
+
+// 写回后端昼夜配置
+function pushScheduleConfig() {
+  invoke("set_schedule_config", {
+    config: {
+      dayTemperature: state.dayTemperature,
+      dayBrightness: state.dayBrightness,
+      nightTemperature: state.nightTemperature,
+      nightBrightness: state.nightBrightness,
+      sunriseMinute: state.sunriseMinute,
+      sunsetMinute: state.sunsetMinute,
+      transitionMinutes: state.transitionMinutes,
+    },
+  }).catch(() => {});
+}
+
+function updateScheduleNow() {
+  const nowLine = $("#schedNow");
+  // 日程未启用时隐藏当前时刻指针，避免让人误以为曲线正在生效
+  if (nowLine) nowLine.style.display = state.scheduleEnabled ? "" : "none";
+  if (state.scheduleEnabled) {
+    const x = (currentMinute() / 1440) * 600;
+    nowLine.setAttribute("x1", `${x}`);
+    nowLine.setAttribute("x2", `${x}`);
+  }
+  const label = $("#scheduleNowText");
+  if (label) {
+    if (state.scheduleEnabled) {
+      const v = schedInterpolate(currentMinute());
+      label.textContent = `此刻 ${v.temperature}K · ${Math.round(v.brightness * 100)}%`;
+    } else {
+      label.textContent = "开启后按此曲线自动调节";
+    }
+  }
+  // 信息行：显示当前处于白天/夜晚/过渡，帮用户把曲线和读数对上
+  const info = $("#schedSelected");
+  if (info) {
+    const now = currentMinute();
+    const half = Math.max(1, state.transitionMinutes / 2);
+    const near = (c) => { let d = now - c; if (d >= 720) d -= 1440; if (d < -720) d += 1440; return Math.abs(d) < half; };
+    const daylight = ((state.sunsetMinute - state.sunriseMinute) % 1440 + 1440) % 1440;
+    const since = ((now - state.sunriseMinute) % 1440 + 1440) % 1440;
+    const phase = near(state.sunriseMinute) || near(state.sunsetMinute)
+      ? "过渡中" : (since < daylight ? "白天" : "夜晚");
+    info.textContent = `白天 ${state.dayTemperature}K·${Math.round(state.dayBrightness * 100)}% ｜ 夜晚 ${state.nightTemperature}K·${Math.round(state.nightBrightness * 100)}% ｜ 当前 ${phase}`;
+  }
+  const remaining = state.manualOverrideUntil - Date.now();
+  const status = $("#scheduleStatus");
+  const restoreBtn = $("#btnRestoreAuto");
+  if (state.scheduleEnabled && remaining > 0) {
+    const mins = Math.ceil(remaining / 60000);
+    if (status) status.textContent = `手动覆盖中 · ${mins} 分钟后恢复`;
+    if (restoreBtn) restoreBtn.style.display = "inline-block";
+  } else if (state.scheduleEnabled) {
+    if (status) status.textContent = "自动中";
+    if (restoreBtn) restoreBtn.style.display = "none";
+  } else {
+    if (status) status.textContent = "按时间自动调节色温与亮度";
+    if (restoreBtn) restoreBtn.style.display = "none";
+  }
+}
+
+function applyScheduleNow() {
+  if (!state.scheduleEnabled || state.manualOverrideUntil > Date.now()) return;
+  const v = schedInterpolate(currentMinute());
+  state.temperature = v.temperature;
+  state.brightness = Math.round(v.brightness * 100) / 100;
+  syncUI();
+  applyNow();
+}
+
+/* ---------- 手动覆盖（与日程联动） ---------- */
+const OVERRIDE_MINUTES = 30;
+// 用户主动调节时打上“临时覆盖”标记：30 分钟内日程让位给手动值，到期自动恢复。
+function markManualOverride() {
+  if (!state.scheduleEnabled) return;
+  state.manualOverrideUntil = Date.now() + OVERRIDE_MINUTES * 60 * 1000;
+  invoke("set_manual_override", { until: state.manualOverrideUntil }).catch(() => {});
+}
+function clearManualOverride() {
+  state.manualOverrideUntil = 0;
+  invoke("set_manual_override", { until: 0 }).catch(() => {});
+  // 恢复自动后，把日程此刻计算出的值拉回界面
+  invoke("get_effective_settings").then((eff) => {
+    if (eff && typeof eff === "object") {
+      state.brightness = eff.brightness;
+      state.temperature = eff.temperature;
+      state.softness = eff.softness;
+      syncUI();
+      applyNow();
+    }
+  }).catch(() => {});
+}
+
 /* ---------- 效果与持久化 ---------- */
 async function applyNow() {
   try {
@@ -293,12 +514,22 @@ function bindEvents() {
 
   $("#brightnessRange").addEventListener("input", (e) => {
     state.brightness = Number(e.target.value) / 100;
+    markManualOverride();
     syncUI();
     applyNow();
     scheduleSave();
   });
   $("#temperatureRange").addEventListener("input", (e) => {
     state.temperature = Number(e.target.value);
+    markManualOverride();
+    syncUI();
+    applyNow();
+    scheduleSave();
+  });
+  const softRangeEl = $("#softnessRange");
+  if (softRangeEl) softRangeEl.addEventListener("input", (e) => {
+    state.softness = Number(e.target.value);
+    markManualOverride();
     syncUI();
     applyNow();
     scheduleSave();
@@ -310,6 +541,84 @@ function bindEvents() {
     applyNow();
     scheduleSave();
     toast(state.enabled ? "护眼效果已开启" : "护眼效果已关闭");
+  });
+
+  // 自动日程开关
+  $("#scheduleSwitch").addEventListener("click", async () => {
+    state.scheduleEnabled = !state.scheduleEnabled;
+    setSwitch($("#scheduleSwitch"), state.scheduleEnabled);
+    await invoke("set_schedule_enabled", { enabled: state.scheduleEnabled }).catch(() => {});
+    if (state.scheduleEnabled) {
+      // 开启后拉回当前时间对应的自动值
+      invoke("get_effective_settings").then((eff) => {
+        if (eff) {
+          state.temperature = eff.temperature;
+          state.brightness = eff.brightness;
+          state.softness = eff.softness;
+          syncUI();
+          applyNow();
+        }
+      }).catch(() => {});
+      toast("自动日程已开启");
+    } else {
+      clearManualOverride();
+      toast("自动日程已关闭，恢复手动调节");
+    }
+    updateScheduleNow();
+    scheduleSave();
+  });
+  $("#btnSchedulePreset").addEventListener("click", () => {
+    state.dayTemperature = 6600;
+    state.dayBrightness = 1.0;
+    state.nightTemperature = 3900;
+    state.nightBrightness = 0.85;
+    state.sunriseMinute = 7 * 60 + 20;
+    state.sunsetMinute = 18 * 60 + 30;
+    state.transitionMinutes = 40;
+    syncScheduleConfigUI();
+    renderSchedule();
+    pushScheduleConfig();
+    applyScheduleNow();
+    scheduleSave();
+    toast("已恢复默认昼夜参数");
+  });
+  // 昼夜两态参数绑定：改动后本地重画曲线并写回后端
+  const schedInputs = [
+    ["dayTempInput", "dayTemperature", (v) => Math.round(Math.max(2700, Math.min(7000, v)))],
+    ["nightTempInput", "nightTemperature", (v) => Math.round(Math.max(2700, Math.min(7000, v)))],
+    ["dayBrightInput", "dayBrightness", (v) => Math.max(0.1, Math.min(1, v))],
+    ["nightBrightInput", "nightBrightness", (v) => Math.max(0.1, Math.min(1, v))],
+    ["transitionInput", "transitionMinutes", (v) => Math.round(Math.max(0, Math.min(180, v)))],
+  ];
+  schedInputs.forEach(([id, key, norm]) => {
+    const el = $(`#${id}`);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      state[key] = norm(Number(el.value));
+      syncScheduleConfigUI();
+      renderSchedule();
+      pushScheduleConfig();
+      applyScheduleNow();
+      scheduleSave();
+    });
+  });
+  // 日出/日落用 time input，value 为 HH:MM
+  [["sunriseInput", "sunriseMinute"], ["sunsetInput", "sunsetMinute"]].forEach(([id, key]) => {
+    const el = $(`#${id}`);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const [h, m] = (el.value || "0:0").split(":").map(Number);
+      if (!Number.isFinite(h) || !Number.isFinite(m)) return;
+      state[key] = h * 60 + m;
+      renderSchedule();
+      pushScheduleConfig();
+      applyScheduleNow();
+      scheduleSave();
+    });
+  });
+  $("#btnRestoreAuto").addEventListener("click", () => {
+    clearManualOverride();
+    toast("已恢复自动调节");
   });
 
   // 模板区委托：删除 / 应用模板（空槽仅为占位展示，不是新增入口）
@@ -386,8 +695,20 @@ function bindEvents() {
     scheduleSave();
   });
 
-  $("#btnClose").addEventListener("click", () => {
+  $("#btnClose").addEventListener("click", (ev) => {
+    // 先让关闭按钮自身失焦，避免隐藏/恢复托盘后焦点残留、按钮呈“被选中”高亮
+    if (ev.currentTarget && typeof ev.currentTarget.blur === "function") ev.currentTarget.blur();
     invoke("close_main_window").catch((e) => toast(e, true));
+  });
+  // 从托盘恢复时窗口重新获得焦点，主动清掉可能残留在关闭按钮上的焦点，
+  // 防止它保持高亮/被选中态（Rust 侧 show_and_clear_focus 也会做，这里是前端双保险）。
+  window.addEventListener("focus", () => {
+    const btn = $("#btnClose");
+    if (btn && typeof btn.blur === "function") btn.blur();
+    if (document.activeElement && document.activeElement !== document.body &&
+        typeof document.activeElement.blur === "function") {
+      document.activeElement.blur();
+    }
   });
 
   $("#btnUpdate").addEventListener("click", () => checkUpdate(false));
@@ -397,16 +718,37 @@ function bindEvents() {
   });
 
   $("#modalMore").addEventListener("click", () => {
-    if (latestRelease && latestRelease.html_url) {
-      invoke("open_external", { url: latestRelease.html_url }).catch((e) => toast(e, true));
+    if (latestRelease && latestRelease.url) {
+      invoke("open_external", { url: latestRelease.url }).catch((e) => toast(e, true));
     }
   });
   $("#btnLater").addEventListener("click", () => $("#updateModal").classList.remove("show"));
-  $("#btnDownload").addEventListener("click", () => {
-    if (latestRelease && latestRelease.html_url) {
-      invoke("open_external", { url: latestRelease.html_url }).catch((e) => toast(e, true));
+  $("#btnDownload").addEventListener("click", async () => {
+    if (!latestRelease || !latestRelease.assetUrl) {
+      // 没有可下载的安装包直链时，退回浏览器发布页
+      const url = latestRelease && latestRelease.url
+        ? latestRelease.url
+        : `https://github.com/${UPDATE_REPO}/releases`;
+      invoke("open_external", { url }).catch((e) => toast(e, true));
+      $("#updateModal").classList.remove("show");
+      return;
     }
-    $("#updateModal").classList.remove("show");
+    const btn = $("#btnDownload");
+    const err = $("#updateError");
+    btn.disabled = true;
+    btn.textContent = "正在下载…";
+    err.style.display = "none";
+    try {
+      await invoke("update_download_and_install", { assetUrl: latestRelease.assetUrl });
+      $("#updateModal").classList.remove("show");
+      toast("安装包已启动，请按提示完成安装");
+    } catch (e) {
+      err.textContent = typeof e === "string" ? e : "下载失败，请检查网络后重试";
+      err.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "立即更新";
+    }
   });
 }
 
@@ -431,7 +773,7 @@ function releaseNotesToText(body) {
 function renderUpdateNotes(release) {
   const notes = $("#modalNotes");
   const more = $("#modalMore");
-  const text = releaseNotesToText(release && release.body);
+  const text = releaseNotesToText(release && release.notes);
   if (!text) {
     notes.textContent = "新版本已发布，包含体验优化与问题修复。建议更新以获得更好的护眼体验。";
     more.style.display = "none";
@@ -450,16 +792,7 @@ function renderUpdateNotes(release) {
   }
 }
 
-function compareVersion(a, b) {
-  const pa = String(a).replace(/^v/i, "").split(".").map(Number);
-  const pb = String(b).split(".").map(Number);
-  for (let i = 0; i < 3; i += 1) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
+// 版本比较在后端 check_update 命令中完成（hasUpdate），前端直接采用结果
 async function checkUpdate(isStartup) {
   const btn = $("#btnUpdate");
   const result = $("#updateResult");
@@ -468,34 +801,34 @@ async function checkUpdate(isStartup) {
     result.textContent = "正在检查…";
   }
   try {
-    const response = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const release = await response.json();
-    latestRelease = release;
-    const latest = release.tag_name || "";
+    // 检查与下载都收拢到后端命令：后端负责 GitHub 访问、限流处理与安装包直链解析
+    const info = await invoke("check_update", { appVersion: APP_VERSION });
+    if (!info || typeof info !== "object") return;
+    latestRelease = info;
+    const hasUpdate = !!info.hasUpdate;
+    const latest = info.latest || "";
     if (!isStartup) {
-      if (compareVersion(latest, APP_VERSION) > 0) {
+      if (hasUpdate) {
         result.className = "update-result warn";
-        result.textContent = `发现新版本 ${latest}`;
+        result.textContent = `发现新版本 v${latest}`;
       } else {
         result.className = "update-result ok";
         result.textContent = `当前已是最新版本（${APP_VERSION}）`;
       }
     }
-    if (isStartup && compareVersion(latest, APP_VERSION) > 0) {
+    if (isStartup && hasUpdate) {
       // 启动最小化时窗口隐藏在托盘，先唤起主窗口，否则弹窗用户看不到
       invoke("show_main_window").catch(() => {});
-      $("#modalVersion").textContent = latest;
-      renderUpdateNotes(release);
+      $("#modalVersion").textContent = `v${latest}`;
+      renderUpdateNotes(info);
       $("#updateModal").classList.add("show");
     }
   } catch (error) {
     console.warn("update check failed:", error);
     if (!isStartup) {
       result.className = "update-result";
-      result.textContent = "暂时无法获取更新信息，请检查网络或更新源配置";
+      const msg = typeof error === "string" ? error : "";
+      result.textContent = msg || "暂时无法获取更新信息，请检查网络或更新源配置";
     }
   } finally {
     btn.disabled = false;
@@ -521,6 +854,17 @@ async function init() {
   if (typeof state.overlayEnabled !== "boolean") state.overlayEnabled = false;
   if (typeof state.overlayStrength !== "number") state.overlayStrength = 18;
   if (typeof state.overlayColor !== "string") state.overlayColor = DEFAULT_OVERLAY_COLOR;
+  if (typeof state.softness !== "number") state.softness = DEFAULT_SOFTNESS;
+  if (typeof state.scheduleEnabled !== "boolean") state.scheduleEnabled = false;
+  // 昼夜两态参数：旧配置没有这些字段时用默认值补齐（0 视为未初始化）
+  if (!state.dayTemperature) state.dayTemperature = 6600;
+  if (!(state.dayBrightness > 0)) state.dayBrightness = 1.0;
+  if (!state.nightTemperature) state.nightTemperature = 3900;
+  if (!(state.nightBrightness > 0)) state.nightBrightness = 0.85;
+  if (!state.sunriseMinute) state.sunriseMinute = 7 * 60 + 20;
+  if (!state.sunsetMinute) state.sunsetMinute = 18 * 60 + 30;
+  if (!state.transitionMinutes) state.transitionMinutes = 40;
+  if (typeof state.manualOverrideUntil !== "number") state.manualOverrideUntil = 0;
 
   // 版本号单点注入：以后只改 APP_VERSION 即可，HTML 中不再硬编码
   document.querySelectorAll("[data-app-version]").forEach((el) => {
@@ -545,8 +889,22 @@ async function init() {
     console.warn("portable/autostart query failed:", e);
   }
   syncUI();
+  setSwitch($("#scheduleSwitch"), state.scheduleEnabled);
+  syncScheduleConfigUI();
+  renderSchedule();
   $("#updateResult").textContent = `当前版本 v${APP_VERSION}`;
   applyNow();
+  // 日程时间指针与覆盖状态每 30 秒刷新；覆盖到期后自动把界面拉回自动值
+  let wasOverridden = state.manualOverrideUntil > Date.now();
+  setInterval(() => {
+    updateScheduleNow();
+    const isOverridden = state.manualOverrideUntil > Date.now();
+    if (wasOverridden && !isOverridden && state.scheduleEnabled) {
+      state.manualOverrideUntil = 0;
+      clearManualOverride();
+    }
+    wasOverridden = isOverridden;
+  }, 30_000);
   if (state.checkUpdatesOnStartup) setTimeout(() => checkUpdate(true), 1200);
 }
 

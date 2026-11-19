@@ -71,6 +71,9 @@ mod win {
     pub const WM_TIMER: u32 = 0x0113;
     pub const WM_APP: u32 = 0x8000;
     pub const WM_MEC_QUIT: u32 = WM_APP + 5;
+    /// DPI 变化时只同步遮罩几何，不重写 gamma（gamma 与 DPI 无关，重复写会闪）
+    pub const TIMER_GEOMETRY_ONLY: usize = 5;
+    pub const GEOMETRY_DELAY_MS: u32 = 250;
 
     pub const PBT_APMRESUMECRITICAL: usize = 0x0006;
     pub const PBT_APMRESUMESUSPEND: usize = 0x0007;
@@ -166,6 +169,7 @@ unsafe fn schedule_reapply(hwnd: win::Hwnd) {
     win::SetTimer(hwnd, win::TIMER_REAPPLY_3, win::SLOW_DELAY_MS, std::ptr::null_mut());
 }
 
+/// 完整重应用：gamma（已幂等）+ 遮罩刷新。用于息屏/电源/分辨率变化。
 fn reapply() {
     let Some(settings) = crate::settings::current() else {
         return;
@@ -173,7 +177,15 @@ fn reapply() {
     if !settings.enabled {
         return;
     }
-    crate::gamma::apply(&settings);
+    // 息屏唤醒/分辨率变化后按“此刻应有的值”重应用：若日程自动控制中，
+    // effective() 会用当前时间插值出的色温/亮度覆盖快照里的手动值。
+    let eff = crate::schedule::effective(&settings);
+    crate::gamma::apply_effective(&eff);
+    crate::overlay::refresh();
+}
+
+/// 仅同步遮罩几何：DPI 变化/窗口跨屏拖动走这里，不碰 gamma，避免闪烁。
+fn refresh_geometry_only() {
     crate::overlay::refresh();
 }
 
@@ -186,9 +198,21 @@ extern "system" fn watcher_proc(
 ) -> isize {
     unsafe {
         match msg {
-            win::WM_DISPLAYCHANGE | win::WM_DPICHANGED => {
-                // 驱动切换分辨率需要一点时间，阶梯延迟后再写 gamma
+            win::WM_DISPLAYCHANGE => {
+                // 分辨率变化会重置驱动 gamma，阶梯延迟后重写
                 schedule_reapply(hwnd);
+                0
+            }
+            win::WM_DPICHANGED => {
+                // DPI 变化（常见于拖动窗口跨屏）不改 gamma，只去抖同步遮罩几何。
+                // 若也重写 gamma，驱动会每次跳变一次亮度，表现为“闪来闪去”。
+                win::KillTimer(hwnd, win::TIMER_GEOMETRY_ONLY);
+                win::SetTimer(
+                    hwnd,
+                    win::TIMER_GEOMETRY_ONLY,
+                    win::GEOMETRY_DELAY_MS,
+                    std::ptr::null_mut(),
+                );
                 0
             }
             win::WM_POWERBROADCAST => {
@@ -230,6 +254,10 @@ extern "system" fn watcher_proc(
                     win::TIMER_REAPPLY_3 => {
                         win::KillTimer(hwnd, win::TIMER_REAPPLY_3);
                         reapply();
+                    }
+                    win::TIMER_GEOMETRY_ONLY => {
+                        win::KillTimer(hwnd, win::TIMER_GEOMETRY_ONLY);
+                        refresh_geometry_only();
                     }
                     win::TIMER_PERIODIC => reapply(),
                     _ => {}

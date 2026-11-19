@@ -67,8 +67,11 @@ extern "system" {
 }
 
 /// 把 ramp 推送到所有活动显示器，返回成功应用的屏幕数量。
+/// force=false 时先读回当前 ramp 比较，完全一致则跳过写入——
+/// 这是消除“拖动窗口/切换页面时闪来闪去”的关键：驱动对重复写入 gamma
+/// 也会触发一次短暂的亮度跳变，幂等化后只有真正变化（或被外部重置）才写。
 #[cfg(target_os = "windows")]
-fn push_ramp(ramp: &GammaRamp) -> usize {
+fn push_ramp(ramp: &GammaRamp, force: bool) -> usize {
     let mut applied = 0usize;
     unsafe {
         let mut index = 0u32;
@@ -94,11 +97,34 @@ fn push_ramp(ramp: &GammaRamp) -> usize {
             if dc.is_null() {
                 continue;
             }
-            let ok = SetDeviceGammaRamp(dc, ramp as *const GammaRamp as *mut c_void);
-            DeleteDC(dc);
-            if ok != 0 {
-                applied += 1;
+            // 非强制时先读回比较：只在“明显不同”时才写。
+            // 关键：很多驱动的 GetDeviceGammaRamp 读回值会与写入值差 1~2 个 LSB
+            // （内部量化/缩放），用“完全相等”判断会永远判为不同，导致每次
+            // reapply 都重写 gamma —— 而驱动对重复写入也会触发一次亮度跳变，
+            // 这正是“切窗/拖动时闪来闪去”的根因。改用容差比较即可消除。
+            let need_write = if force {
+                true
+            } else {
+                let mut current = GammaRamp {
+                    red: [0; 256],
+                    green: [0; 256],
+                    blue: [0; 256],
+                };
+                if GetDeviceGammaRamp(dc, &mut current as *mut GammaRamp as *mut c_void) == 0 {
+                    true // 读不出来就照常写
+                } else {
+                    ramp_differs(&current, ramp)
+                }
+            };
+            if need_write {
+                let ok = SetDeviceGammaRamp(dc, ramp as *const GammaRamp as *mut c_void);
+                if ok != 0 {
+                    applied += 1;
+                }
+            } else {
+                applied += 1; // 已经是正确的 ramp，视为生效
             }
+            DeleteDC(dc);
         }
 
         // 极端情况下的兜底：主显示器 DC
@@ -117,8 +143,29 @@ fn push_ramp(ramp: &GammaRamp) -> usize {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn push_ramp(_ramp: &()) -> usize {
+fn push_ramp(_ramp: &(), _force: bool) -> usize {
     0
+}
+
+/// 判断两块 ramp 是否有“可见差异”。容差 4/65535 ≈ 0.006%，远低于人眼阈值，
+/// 足以吸收驱动的读回量化噪声，同时真正的参数变化（色温/亮度/柔和度）远超此值。
+#[cfg(target_os = "windows")]
+fn ramp_differs(a: &GammaRamp, b: &GammaRamp) -> bool {
+    const TOL: i32 = 4;
+    for i in 0..256usize {
+        if ((a.red[i] as i32) - (b.red[i] as i32)).abs() > TOL
+            || ((a.green[i] as i32) - (b.green[i] as i32)).abs() > TOL
+            || ((a.blue[i] as i32) - (b.blue[i] as i32)).abs() > TOL
+        {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ramp_differs(_a: &(), _b: &()) -> bool {
+    false
 }
 
 #[cfg(target_os = "windows")]
@@ -175,20 +222,35 @@ fn channel_gains(kelvin: u32) -> [f64; 3] {
 }
 
 #[cfg(target_os = "windows")]
-fn build_ramp(brightness: f64, kelvin: u32) -> GammaRamp {
+fn build_ramp(brightness: f64, kelvin: u32, softness: u32) -> GammaRamp {
     let brightness = brightness.clamp(0.2, 1.0);
     let exponent = 1.0 / brightness;
     let gains = channel_gains(kelvin);
+
+    // 柔和度：gamma 层轻微抬黑位 + 中段压缩，降低对比度但不让文字发灰。
+    // lift 上限 0.03（黑位最高约 8/255，肉眼仍是黑），且亮度越低 lift 越小，
+    // 避免暗部发糊；中段压缩让中间调斜率略降，黑端/白端基本不动以保留锐度。
+    let soft = (softness.min(100) as f64) / 100.0;
+    let lift = 0.03 * soft * brightness.max(0.5);
+    let mid_exp = 1.0 + 0.35 * soft;
+
     let mut ramp = GammaRamp {
         red: [0; 256],
         green: [0; 256],
         blue: [0; 256],
     };
     for i in 0..256usize {
-        let value = (i as f64 / 255.0).powf(exponent);
-        ramp.red[i] = (value * gains[0] * 65535.0).round().clamp(0.0, 65535.0) as u16;
-        ramp.green[i] = (value * gains[1] * 65535.0).round().clamp(0.0, 65535.0) as u16;
-        ramp.blue[i] = (value * gains[2] * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        let base = (i as f64 / 255.0).powf(exponent);
+        let shaped = if soft > 0.0 {
+            // 先抬黑位，再压中段；两端钳制保护
+            let lifted = lift + (1.0 - lift) * base;
+            lifted.powf(mid_exp).min(1.0)
+        } else {
+            base
+        };
+        ramp.red[i] = (shaped * gains[0] * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        ramp.green[i] = (shaped * gains[1] * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        ramp.blue[i] = (shaped * gains[2] * 65535.0).round().clamp(0.0, 65535.0) as u16;
     }
     ramp
 }
@@ -196,19 +258,22 @@ fn build_ramp(brightness: f64, kelvin: u32) -> GammaRamp {
 static GAMMA_LOCK: Mutex<()> = Mutex::new(());
 
 /// 内部使用：应用效果，返回成功屏幕数。
-fn apply_inner(settings: &Settings) -> usize {
-    // 保存进程内快照：息屏/显示重启后由监听线程原样重应用
-    crate::settings::set_current(settings);
+/// save_snapshot=true 时把传入配置存为“用户配置快照”；
+/// 日程/显示监听应用的是计算后的生效值，不能污染快照，故传 false。
+fn apply_inner(settings: &Settings, save_snapshot: bool) -> usize {
+    if save_snapshot {
+        crate::settings::set_current(settings);
+    }
     let _guard = GAMMA_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     #[cfg(target_os = "windows")]
     let applied = {
         let ramp = if settings.enabled {
-            build_ramp(settings.brightness, settings.temperature)
+            build_ramp(settings.brightness, settings.temperature, settings.softness)
         } else {
             identity_ramp()
         };
-        push_ramp(&ramp)
+        push_ramp(&ramp, false)
     };
     #[cfg(not(target_os = "windows"))]
     let applied = {
@@ -221,19 +286,25 @@ fn apply_inner(settings: &Settings) -> usize {
     applied
 }
 
+/// 应用用户配置（会更新快照）。用于启动时和前端手动调节。
 pub fn apply(settings: &Settings) {
-    apply_inner(settings);
+    apply_inner(settings, true);
+}
+
+/// 应用计算后的生效值，不写快照。用于日程 tick 与显示变化重应用。
+pub fn apply_effective(settings: &Settings) {
+    apply_inner(settings, false);
 }
 
 pub fn reset() {
     let _guard = GAMMA_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     #[cfg(target_os = "windows")]
-    push_ramp(&identity_ramp());
+    push_ramp(&identity_ramp(), true);
 }
 
 #[tauri::command]
 pub fn apply_effect(settings: Settings) -> Result<usize, String> {
-    let applied = apply_inner(&settings);
+    let applied = apply_inner(&settings, true);
     if applied == 0 {
         Err("显示驱动拒绝了 gamma 调节，请确认未处于远程桌面/HDR 模式".to_string())
     } else {

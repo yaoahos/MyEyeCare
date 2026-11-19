@@ -8,7 +8,7 @@
   --border: rgba(255, 255, 255, 0.92);
   --text: #173a2c;
   --text-2: #35604f;
-  --muted: #5f8271;
+  --muted: #476b58;
   --green: #2f9e6b;
   --green-2: #57bd88;
   --sky: #3a9bd0;
@@ -63,8 +63,8 @@ svg { width: 100%; height: 100%; display: block; }
   border-radius: 13px; color: var(--muted);
   transition: background .18s ease, color .18s ease;
 }
-.nav-item svg { width: 20px; height: 20px; flex-shrink: 0; }
-.nav-item span { font-size: 11px; font-weight: 560; }
+.nav-item svg { width: 22px; height: 22px; flex-shrink: 0; }
+.nav-item span { font-size: 13px; font-weight: 620; }
 .nav-item:hover { background: rgba(255, 255, 255, 0.6); color: var(--text-2); }
 .nav-item.active { color: var(--green); background: rgba(255, 255, 255, 0.92); box-shadow: 0 4px 12px rgba(56, 120, 92, 0.12); }
 .nav-item.active::before {
@@ -80,11 +80,25 @@ svg { width: 100%; height: 100%; display: block; }
   padding: 0 10px 0 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.55);
 }
-.win-btn { width: 28px; height: 28px; padding: 7px; border-radius: 8px; color: var(--muted); transition: background .16s, color .16s; }
-.win-btn:hover { background: rgba(238, 143, 113, 0.16); color: #c96a4f; }
+/* 关闭按钮：任何状态都无高亮底、无焦点框。
+   原因：点击 X 时鼠标停在按钮上→窗口隐藏→WebView 未收到 mouseleave，
+   :hover 状态被冻结；从托盘恢复时鼠标已在任务栏，高亮底却仍在，看起来像“被选中”。
+   唯一可靠的解法是让所有伪类的视觉表现与默认完全一致。 */
+.win-btn {
+  width: 30px; height: 30px; padding: 7px; border-radius: 8px;
+  color: var(--muted); background: transparent !important; border: none !important;
+  box-shadow: none !important; outline: none !important;
+  -webkit-tap-highlight-color: transparent; transition: none !important;
+}
+.win-btn:hover, .win-btn:focus, .win-btn:focus-visible, .win-btn:active,
+.win-btn:focus:hover, .win-btn:focus-visible:hover, .win-btn:active:hover {
+  background: transparent !important; color: var(--muted) !important;
+  box-shadow: none !important; outline: none !important; border: none !important;
+}
 
 /* 两页均严格适配窗口高度，不出现滚动条 */
-.content { flex: 1; min-height: 0; overflow: hidden; display: flex; padding: 14px 18px 16px; }
+.content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; padding: 14px 18px 16px; scrollbar-width: none; }
+.content::-webkit-scrollbar { display: none; }
 .view { display: none; flex: 1; min-width: 0; min-height: 0; flex-direction: column; animation: fadeUp .26s ease both; }
 .view.active { display: flex; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -100,11 +114,58 @@ svg { width: 100%; height: 100%; display: block; }
 /* ---------------- 效果总开关 ---------------- */
 .master-card {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 12px 18px; margin-bottom: 12px; flex-shrink: 0;
+  padding: 9px 18px; margin-bottom: 9px; flex-shrink: 0;
 }
 .master-copy { display: flex; flex-direction: column; gap: 4px; }
-.master-copy strong { font-size: 14px; font-weight: 650; }
-.master-copy span { font-size: 12px; color: var(--muted); }
+.master-copy strong { font-size: 14.5px; font-weight: 680; }
+.master-copy span { font-size: 12.5px; color: var(--text-2); font-weight: 560; }
+
+/* ---------------- 自动日程曲线 ---------------- */
+.schedule-card { padding: 13px 18px 12px; margin-bottom: 10px; flex-shrink: 0; }
+.schedule-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.schedule-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.schedule-title strong { font-size: 14px; font-weight: 680; flex-shrink: 0; }
+.schedule-title span { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 昼夜两态：左参数、右曲线 */
+.schedule-body { display: grid; grid-template-columns: minmax(300px, 1.05fr) 1fr; gap: 16px; margin-top: 11px; align-items: center; }
+.schedule-params { display: flex; flex-direction: column; gap: 9px; }
+.phase-row { display: grid; grid-template-columns: 34px 1fr 1fr; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 9px; background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.75); }
+.phase-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 680; white-space: nowrap; }
+.phase-dot { width: 8px; height: 8px; border-radius: 50%; }
+.phase-row.day .phase-dot { background: #e0a458; }
+.phase-row.night .phase-dot { background: #6b7fa8; }
+.phase-field { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-2); font-weight: 560; min-width: 0; }
+.phase-field input, .phase-times input {
+  width: 52px; min-width: 0; padding: 3px 4px; border-radius: 5px; text-align: center;
+  font-size: 12.5px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--text);
+  background: rgba(255, 255, 255, 0.96); border: 1px solid rgba(47, 158, 107, 0.32); outline: none;
+}
+.phase-field input[type="number"] { flex: 1; width: auto; }
+.phase-field em, .phase-times em { font-size: 11px; color: var(--green); font-style: normal; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.phase-times { display: flex; align-items: center; gap: 10px; padding: 2px 2px 0; font-size: 11.5px; color: var(--text-2); font-weight: 560; }
+.phase-times label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+/* 时间控件内部带时钟图标，宽度需留足，否则最后一位分钟被裁掉（07:2 / 18:3） */
+.phase-times input[type="time"] { width: 84px; padding-right: 2px; }
+.phase-times input[type="number"] { width: 38px; }
+
+.schedule-legend { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--text-2); font-weight: 560; }
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.legend-dot.temp { background: #e0a458; }
+.legend-dot.bright { background: var(--green); border-radius: 2px; }
+.legend-hint { margin-left: auto; color: var(--text-2); }
+.schedule-chart { position: relative; height: 88px; margin: 5px 0 0; }
+#schedLinks line.sunrise { stroke: #e0a458; }
+#schedLinks line.sunset { stroke: #6b7fa8; }
+.schedule-chart svg { width: 100%; height: 100%; display: block; }
+.schedule-axis { position: relative; height: 13px; margin-top: 3px; }
+.schedule-axis span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--text-2); font-weight: 560; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.schedule-axis span:first-child { transform: none; }
+.schedule-axis span:last-child { transform: translateX(-100%); }
+.schedule-actions { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+.schedule-actions .text-btn { font-size: 12px; font-weight: 560; padding: 3px 0; flex-shrink: 0; }
+.sched-selected { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-2); font-weight: 560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.schedule-now { margin-left: 0; flex-shrink: 0; font-size: 11.5px; color: var(--green); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ---------------- 开关 ---------------- */
 .switch {
@@ -124,14 +185,15 @@ svg { width: 100%; height: 100%; display: block; }
 .switch.small[aria-checked="true"] span { transform: translateX(16px); }
 
 /* ---------------- 调节 + 模板 两栏 ---------------- */
-.adjust-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(190px, 0.8fr) 1.2fr; gap: 12px; align-items: stretch; }
-.control-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.control-card { padding: 13px 16px 12px; flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
-.control-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.control-icon { width: 34px; height: 34px; padding: 7px; border-radius: 10px; flex-shrink: 0; }
+.adjust-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(210px, 0.85fr) 1.15fr; gap: 12px; align-items: stretch; }
+.control-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.control-card { padding: 10px 18px 9px; flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
+.control-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.control-icon { width: 30px; height: 30px; padding: 6px; border-radius: 9px; flex-shrink: 0; }
 .control-icon.sky { color: var(--sky); background: rgba(58, 155, 208, 0.14); }
 .control-icon.grass { color: var(--green); background: rgba(47, 158, 107, 0.14); }
 .control-icon.tint { color: #d68c4f; background: rgba(235, 170, 100, 0.18); }
+.control-icon.soft { color: #8a7fc0; background: rgba(150, 135, 200, 0.16); }
 .control-title { flex: 1; }
 .control-title strong { font-size: 13.5px; font-weight: 620; }
 .control-value { font-size: 16px; font-weight: 680; font-variant-numeric: tabular-nums; color: var(--green); }
@@ -150,7 +212,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.12); }
 input[type="range"].temp-range {
   background: linear-gradient(90deg, #f3a95e 0%, #ffd9a0 22%, #fff6dc 48%, #dff0fb 74%, #9ec9e8 100%);
 }
-.range-labels { display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; color: var(--muted); }
+.range-labels { display: flex; justify-content: space-between; margin-top: 7px; font-size: 11.5px; color: var(--text-2); font-weight: 560; }
 
 /* ---------------- 独立柔色遮罩卡片 ---------------- */
 .overlay-body { transition: opacity .18s ease; }
@@ -164,18 +226,18 @@ input[type="range"].temp-range {
 }
 .color-swatch:hover { transform: scale(1.16); }
 .color-swatch.active { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--green), 0 2px 6px rgba(40, 90, 65, 0.2); }
-.strength-line { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-.strength-line > span { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.strength-line { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.strength-line > span { font-size: 11.5px; color: var(--text-2); font-weight: 560; flex-shrink: 0; }
 .strength-line input[type="range"] { flex: 1; height: 6px; }
 .strength-line input[type="range"]::-webkit-slider-thumb { width: 15px; height: 15px; }
 .strength-line b { width: 30px; text-align: right; font-size: 11px; font-weight: 620; color: var(--green); font-variant-numeric: tabular-nums; }
 
 /* ---------------- 模板色卡：上色块 + 下介绍（3x3） ---------------- */
-.template-panel { padding: 15px 17px 16px; display: flex; flex-direction: column; min-height: 0; }
-.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-shrink: 0; }
+.template-panel { padding: 12px 17px 13px; display: flex; flex-direction: column; min-height: 0; }
+.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; flex-shrink: 0; }
 .section-head h2 { font-size: 14px; font-weight: 640; }
 .head-actions { display: flex; align-items: center; gap: 2px; }
-.text-btn { font-size: 11.5px; color: var(--muted); padding: 5px 7px; border-radius: 7px; transition: all .16s; }
+.text-btn { font-size: 12px; color: var(--text-2); font-weight: 560; padding: 5px 7px; border-radius: 7px; transition: all .16s; }
 .text-btn:hover { color: var(--green); background: rgba(47, 158, 107, 0.09); }
 .text-btn.save-text { color: var(--green); font-weight: 620; }
 .text-btn.save-text:hover { background: rgba(47, 158, 107, 0.14); }
@@ -183,10 +245,10 @@ input[type="range"].temp-range {
 
 .template-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
-  gap: 10px; flex: 1; min-height: 0;
+  gap: 8px; flex: 1; min-height: 0;
 }
 .template {
-  position: relative; text-align: center; min-height: 0; padding: 9px 8px 10px; border-radius: 12px;
+  position: relative; text-align: center; min-height: 0; padding: 8px 8px 9px; border-radius: 12px;
   display: flex; flex-direction: column; justify-content: space-between;
   background: rgba(255, 255, 255, 0.55); border: 1px solid rgba(255, 255, 255, 0.8);
   transition: transform .18s ease, border-color .18s ease, background .18s ease;
@@ -194,7 +256,7 @@ input[type="range"].temp-range {
 .template:hover { transform: translateY(-2px); background: #fff; }
 .template.active { border-color: var(--green); background: #fff; box-shadow: 0 5px 14px rgba(47, 158, 107, 0.18); }
 .template-swatch {
-  height: 42px; border-radius: 9px; margin-bottom: 7px;
+  height: 36px; border-radius: 9px; margin-bottom: 6px;
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.5);
   position: relative; overflow: hidden;
@@ -204,7 +266,7 @@ input[type="range"].temp-range {
   background: radial-gradient(circle at 26% 22%, rgba(255,255,255,.6), transparent 55%);
 }
 .template-name { font-size: 12.5px; font-weight: 640; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.template-desc { margin-top: 4px; font-size: 10.5px; color: var(--muted); line-height: 1.4; font-variant-numeric: tabular-nums; }
+.template-desc { margin-top: 4px; font-size: 11px; color: var(--text-2); font-weight: 560; line-height: 1.4; font-variant-numeric: tabular-nums; }
 .template.active .template-name { color: var(--green); }
 
 /* 自定义模板：右上角删除按钮 */
@@ -232,7 +294,7 @@ input[type="range"].temp-range {
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid rgba(120, 160, 140, 0.14); }
 .setting-copy { display: flex; flex-direction: column; gap: 4px; }
 .setting-copy strong { font-size: 13px; font-weight: 600; }
-.setting-copy span { font-size: 11.5px; color: var(--muted); }
+.setting-copy span { font-size: 12px; color: var(--text-2); font-weight: 560; }
 
 /* ---------------- 关于（设置页内嵌） ---------------- */
 .about-card { padding: 2px 20px 12px; flex-shrink: 0; }
@@ -295,6 +357,11 @@ input[type="range"].temp-range {
   cursor: pointer;
 }
 .modal-more:hover { filter: brightness(1.08); }
+.modal-error {
+  margin-top: 10px; padding: 8px 10px; border-radius: 8px; text-align: left;
+  font-size: 11px; line-height: 1.5; color: #b4543f;
+  background: rgba(214, 112, 84, .1); border: 1px solid rgba(214, 112, 84, .22);
+}
 .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
 .modal-actions > button { flex: 1; }
 .confirm-card { width: 280px; }
