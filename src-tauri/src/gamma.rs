@@ -113,7 +113,8 @@ fn push_ramp(ramp: &GammaRamp, force: bool) -> usize {
                 if GetDeviceGammaRamp(dc, &mut current as *mut GammaRamp as *mut c_void) == 0 {
                     true // 读不出来就照常写
                 } else {
-                    ramp_differs(&current, ramp)
+                    // 读回检测：容差放到可见差异级别，吸收驱动量化噪声与色彩增强带来的偏移
+                    ramp_differs(&current, ramp, 96)
                 }
             };
             if need_write {
@@ -147,15 +148,14 @@ fn push_ramp(_ramp: &(), _force: bool) -> usize {
     0
 }
 
-/// 判断两块 ramp 是否有“可见差异”。容差 4/65535 ≈ 0.006%，远低于人眼阈值，
-/// 足以吸收驱动的读回量化噪声，同时真正的参数变化（色温/亮度/柔和度）远超此值。
+/// 判断两块 ramp 是否有差异。tol=0 为逐字节精确比较（用于目标缓存幂等）；
+/// tol>0 为容差比较（用于驱动读回检测，吸收量化噪声）。
 #[cfg(target_os = "windows")]
-fn ramp_differs(a: &GammaRamp, b: &GammaRamp) -> bool {
-    const TOL: i32 = 4;
+fn ramp_differs(a: &GammaRamp, b: &GammaRamp, tol: i32) -> bool {
     for i in 0..256usize {
-        if ((a.red[i] as i32) - (b.red[i] as i32)).abs() > TOL
-            || ((a.green[i] as i32) - (b.green[i] as i32)).abs() > TOL
-            || ((a.blue[i] as i32) - (b.blue[i] as i32)).abs() > TOL
+        if ((a.red[i] as i32) - (b.red[i] as i32)).abs() > tol
+            || ((a.green[i] as i32) - (b.green[i] as i32)).abs() > tol
+            || ((a.blue[i] as i32) - (b.blue[i] as i32)).abs() > tol
         {
             return true;
         }
@@ -164,7 +164,7 @@ fn ramp_differs(a: &GammaRamp, b: &GammaRamp) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn ramp_differs(_a: &(), _b: &()) -> bool {
+fn ramp_differs(_a: &(), _b: &(), _tol: i32) -> bool {
     false
 }
 
@@ -256,11 +256,18 @@ fn build_ramp(brightness: f64, kelvin: u32, softness: u32) -> GammaRamp {
 }
 
 static GAMMA_LOCK: Mutex<()> = Mutex::new(());
+// 上次“真正写入”的目标 ramp。幂等判断以它为唯一依据，不再依赖驱动读回：
+// 某些驱动只要调用 SetDeviceGammaRamp 就会引起一次可见跳变，而 GetDeviceGammaRamp
+// 的读回值又有量化噪声（差 1~数个 LSB），导致过去用读回比较时反复误判为“不同”而重写。
+// 用我们自己生成的目标 ramp 比较是完全确定性的：参数没变 → ramp 逐字节相同 → 跳过写屏。
+#[cfg(target_os = "windows")]
+static LAST_WRITTEN_RAMP: Mutex<Option<GammaRamp>> = Mutex::new(None);
 
 /// 内部使用：应用效果，返回成功屏幕数。
 /// save_snapshot=true 时把传入配置存为“用户配置快照”；
 /// 日程/显示监听应用的是计算后的生效值，不能污染快照，故传 false。
-fn apply_inner(settings: &Settings, save_snapshot: bool) -> usize {
+/// force=true 用于显示/电源变化后的恢复：跳过幂等，强制重写一次。
+fn apply_inner(settings: &Settings, save_snapshot: bool, force: bool) -> usize {
     if save_snapshot {
         crate::settings::set_current(settings);
     }
@@ -273,38 +280,72 @@ fn apply_inner(settings: &Settings, save_snapshot: bool) -> usize {
         } else {
             identity_ramp()
         };
-        push_ramp(&ramp, false)
+        // 确定性幂等：目标 ramp 与上次写入完全相同则跳过，避免驱动对重复写入的跳变响应。
+        // 读回检查仅作为“被外部程序重置”的兜底，且容差放大到可见差异级别。
+        let skip = if force {
+            false
+        } else {
+            LAST_WRITTEN_RAMP
+                .lock()
+                .ok()
+                .and_then(|g| *g)
+                .map(|last| !ramp_differs(&last, &ramp, 0))
+                .unwrap_or(false)
+        };
+        if skip {
+            1 // 视为已生效：当前屏幕本就处于目标 ramp
+        } else {
+            let n = push_ramp(&ramp, force);
+            if n > 0 {
+                if let Ok(mut g) = LAST_WRITTEN_RAMP.lock() {
+                    *g = Some(ramp);
+                }
+            }
+            n
+        }
     };
     #[cfg(not(target_os = "windows"))]
     let applied = {
         let _ = settings;
+        let _ = force;
         0
     };
 
-    // 色罩与 gamma 同步更新
+    // 色罩与 gamma 同步更新（overlay 自身也有完备的幂等判断）
     overlay::apply(settings);
     applied
 }
 
 /// 应用用户配置（会更新快照）。用于启动时和前端手动调节。
 pub fn apply(settings: &Settings) {
-    apply_inner(settings, true);
+    apply_inner(settings, true, false);
 }
 
-/// 应用计算后的生效值，不写快照。用于日程 tick 与显示变化重应用。
+/// 应用计算后的生效值，不写快照。用于日程 tick：参数没变就跳过写屏。
 pub fn apply_effective(settings: &Settings) {
-    apply_inner(settings, false);
+    apply_inner(settings, false, false);
+}
+
+/// 显示/电源变化后的恢复：强制重写一次 gamma，覆盖驱动的延迟重置。
+/// 只在明确的系统事件触发，不会进入 6 秒周期路径。
+pub fn apply_effective_forced(settings: &Settings) {
+    apply_inner(settings, false, true);
 }
 
 pub fn reset() {
     let _guard = GAMMA_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     #[cfg(target_os = "windows")]
-    push_ramp(&identity_ramp(), true);
+    {
+        push_ramp(&identity_ramp(), true);
+        if let Ok(mut g) = LAST_WRITTEN_RAMP.lock() {
+            *g = Some(identity_ramp());
+        }
+    }
 }
 
 #[tauri::command]
 pub fn apply_effect(settings: Settings) -> Result<usize, String> {
-    let applied = apply_inner(&settings, true);
+    let applied = apply_inner(&settings, true, false);
     if applied == 0 {
         Err("显示驱动拒绝了 gamma 调节，请确认未处于远程桌面/HDR 模式".to_string())
     } else {
@@ -316,6 +357,54 @@ pub fn apply_effect(settings: Settings) -> Result<usize, String> {
 pub fn reset_effect() -> Result<(), String> {
     reset();
     Ok(())
+}
+
+/// 供显示监听的周期兜底调用：判断当前 gamma 是否被外部重置到与目标明显不同。
+/// 只用读回比较且容差放到可见差异级别，驱动量化噪声不会误判；
+/// 只有真正被重置（如驱动在息屏后回写 identity）才返回 true，从而避免每 6 秒重写 gamma 引起跳动。
+#[cfg(target_os = "windows")]
+pub fn needs_restore(settings: &Settings) -> bool {
+    let target = if settings.enabled {
+        build_ramp(settings.brightness, settings.temperature, settings.softness)
+    } else {
+        identity_ramp()
+    };
+    unsafe {
+        let mut index = 0u32;
+        loop {
+            let mut device: DisplayDeviceW = std::mem::zeroed();
+            device.cb = std::mem::size_of::<DisplayDeviceW>() as u32;
+            if EnumDisplayDevicesW(std::ptr::null(), index, &mut device, 0) == 0 {
+                break;
+            }
+            index += 1;
+            if device.state_flags & DISPLAY_DEVICE_ACTIVE == 0 {
+                continue;
+            }
+            let dc = CreateDCW(
+                std::ptr::null(),
+                device.device_name.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+            );
+            if dc.is_null() {
+                continue;
+            }
+            let mut current = GammaRamp { red: [0; 256], green: [0; 256], blue: [0; 256] };
+            let readable = GetDeviceGammaRamp(dc, &mut current as *mut GammaRamp as *mut c_void) != 0;
+            DeleteDC(dc);
+            // 读不出来或与目标明显不同 → 需要恢复
+            if !readable || ramp_differs(&current, &target, 96) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn needs_restore(_settings: &Settings) -> bool {
+    false
 }
 
 /// 诊断命令：读取当前第一块屏幕的 gamma 表，返回是否已被修改过。

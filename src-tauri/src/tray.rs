@@ -1,6 +1,6 @@
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, Manager};
+use tauri::App;
 
 pub fn setup(app: &mut App) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
@@ -29,20 +29,23 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
             }
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
+            // 左键单击、双击一律只展开主界面，不再切换隐藏。
+            // Windows 双击会先产生两次 Click(Up)，再产生 DoubleClick；show 本身幂等，重复调用安全。
+            let should_show = match &event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => true,
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => true,
+                _ => false,
+            };
+            if should_show {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    } else {
-                        let _ = crate::show_and_clear_focus(app);
-                    }
-                }
+                let _ = crate::show_and_clear_focus(app);
             }
         })
         .build(app)?;

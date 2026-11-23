@@ -112,7 +112,8 @@ mod win {
     pub const FAST_DELAY_MS: u32 = 500;
     pub const MID_DELAY_MS: u32 = 1_500;
     pub const SLOW_DELAY_MS: u32 = 4_000;
-    pub const PERIODIC_MS: u32 = 6_000;
+    // 检测型兜底：只判断 gamma 是否被外部重置，不重写，故无需高频。
+    pub const PERIODIC_MS: u32 = 15_000;
 
     #[link(name = "user32")]
     extern "system" {
@@ -169,7 +170,7 @@ unsafe fn schedule_reapply(hwnd: win::Hwnd) {
     win::SetTimer(hwnd, win::TIMER_REAPPLY_3, win::SLOW_DELAY_MS, std::ptr::null_mut());
 }
 
-/// 完整重应用：gamma（已幂等）+ 遮罩刷新。用于息屏/电源/分辨率变化。
+/// 完整重应用：强制重写 gamma + 遮罩刷新。只用于明确的息屏/电源/分辨率变化事件。
 fn reapply() {
     let Some(settings) = crate::settings::current() else {
         return;
@@ -179,8 +180,30 @@ fn reapply() {
     }
     // 息屏唤醒/分辨率变化后按“此刻应有的值”重应用：若日程自动控制中，
     // effective() 会用当前时间插值出的色温/亮度覆盖快照里的手动值。
+    // 阶梯三次触发时，只有 gamma 真被驱动重置才写，避免唤醒瞬间连续多次跳变。
     let eff = crate::schedule::effective(&settings);
-    crate::gamma::apply_effective(&eff);
+    if crate::gamma::needs_restore(&eff) {
+        crate::gamma::apply_effective_forced(&eff);
+    }
+    crate::overlay::refresh();
+}
+
+/// 周期兜底：仅当检测到 gamma 被外部重置到与目标明显不同时才恢复，
+/// 平时什么都不做。此前每 6 秒无条件 reapply 会让驱动对重复写入产生可见跳变。
+fn periodic_check() {
+    let Some(settings) = crate::settings::current() else {
+        return;
+    };
+    if !settings.enabled {
+        return;
+    }
+    // 必须与真正写屏时一样用“生效值”比较：开启日程时，settings 里存的是手动
+    // 配置，直接拿它检测会把正常插值结果误判为被重置，导致每轮兜底都重写 gamma。
+    let eff = crate::schedule::effective(&settings);
+    if !crate::gamma::needs_restore(&eff) {
+        return;
+    }
+    crate::gamma::apply_effective_forced(&eff);
     crate::overlay::refresh();
 }
 
@@ -259,7 +282,7 @@ extern "system" fn watcher_proc(
                         win::KillTimer(hwnd, win::TIMER_GEOMETRY_ONLY);
                         refresh_geometry_only();
                     }
-                    win::TIMER_PERIODIC => reapply(),
+                    win::TIMER_PERIODIC => periodic_check(),
                     _ => {}
                 }
                 0
@@ -339,7 +362,7 @@ fn watcher_thread() {
         POWER_NOTIFY_2.store(h2 as isize, Ordering::SeqCst);
         POWER_NOTIFY_3.store(h3 as isize, Ordering::SeqCst);
 
-        // 兜底：部分驱动息屏/亮屏不广播任何消息，6 秒内自动恢复。
+        // 兜底：部分驱动息屏/亮屏不广播任何消息，15 秒内检测到 gamma 被重置才恢复。
         win::SetTimer(hwnd, win::TIMER_PERIODIC, win::PERIODIC_MS, std::ptr::null_mut());
 
         let mut msg: win::Msg = std::mem::zeroed();

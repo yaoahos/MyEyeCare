@@ -3,7 +3,6 @@
 // 检查更新与更新日志指向同一开源仓库
 const UPDATE_REPO = "yaoahos/MyEyeCare";
 const APP_VERSION = "1.0.2";
-const UPDATE_NOTES_LIMIT = 120; // 弹窗内更新日志最大字符数，超出则截断并给出"查看更多"
 
 const $ = (selector) => document.querySelector(selector);
 const invoke = (cmd, args = {}) => {
@@ -64,6 +63,9 @@ const state = {
   sunsetMinute: 18 * 60 + 30,
   transitionMinutes: 40,
   manualOverrideUntil: 0,
+  // 息屏：空闲分钟(0=关闭，沿用系统设置)；快捷键固定 Ctrl+Enter
+  idleSleepMinutes: 0,
+  lockOnSleep: false,
 };
 
 let saveTimer = null;
@@ -157,6 +159,7 @@ function syncUI() {
   setSwitch($("#updateCheckSwitch"), state.checkUpdatesOnStartup);
   setSwitch($("#autostartSwitch"), state.autostartEnabled === true);
   setSwitch($("#minimizedSwitch"), state.startMinimized);
+  setSwitch($("#lockOnSleepSwitch"), state.lockOnSleep);
 
   // 柔色遮罩
   setSwitch($("#overlaySwitch"), state.overlayEnabled);
@@ -204,6 +207,18 @@ function renderTemplates() {
 function applyTemplate(id) {
   const tpl = allTemplates().find((t) => t.id === id);
   if (!tpl) return;
+  // 模板是固定配置，与按时间自动调节互斥：应用模板时关闭自动日程，
+  // 避免日程 tick 把模板值抢回去（此前只打 30 分钟覆盖，过期就失效）。
+  const wasScheduled = state.scheduleEnabled;
+  if (wasScheduled) {
+    state.scheduleEnabled = false;
+    state.manualOverrideUntil = 0;
+    setSwitch($("#scheduleSwitch"), false);
+    // 只清覆盖标记，不调 clearManualOverride()——后者会异步拉回日程值覆盖即将设置的模板值
+    invoke("set_manual_override", { until: 0 }).catch(() => {});
+    invoke("set_schedule_enabled", { enabled: false }).catch(() => {});
+    updateScheduleNow();
+  }
   state.temperature = tpl.temperature;
   state.brightness = tpl.brightness;
   state.softness = typeof tpl.softness === "number" ? tpl.softness : DEFAULT_SOFTNESS;
@@ -211,11 +226,10 @@ function applyTemplate(id) {
   state.overlayColor = tpl.overlayColor || DEFAULT_OVERLAY_COLOR;
   state.overlayStrength = typeof tpl.overlayStrength === "number" ? tpl.overlayStrength : 18;
   state.enabled = true;
-  markManualOverride();
   syncUI();
   applyNow();
   scheduleSave();
-  toast(`已应用「${tpl.name}」`);
+  toast(wasScheduled ? `已应用「${tpl.name}」，自动日程已关闭` : `已应用「${tpl.name}」`);
 }
 
 function openSaveModal() {
@@ -387,6 +401,58 @@ function syncScheduleConfigUI() {
   put("transitionInput", state.transitionMinutes);
   put("sunriseInput", padTime(state.sunriseMinute));
   put("sunsetInput", padTime(state.sunsetMinute));
+}
+
+/* ---------- 息屏设置 ---------- */
+const IDLE_OPTIONS = [0, 5, 10, 15, 30, 60];
+function normalizeIdleMinutes(value) {
+  const n = Number(value) || 0;
+  return IDLE_OPTIONS.includes(n)
+    ? n
+    : IDLE_OPTIONS.reduce((best, item) => (Math.abs(item - n) < Math.abs(best - n) ? item : best), 0);
+}
+
+function setHotkeyHint(registered) {
+  const hint = $("#hotkeyHint");
+  if (!hint) return;
+  hint.textContent = registered
+    ? "固定 Ctrl+Enter，全局生效"
+    : "固定 Ctrl+Enter（被占用）";
+  hint.classList.toggle("hint-error", !registered);
+}
+
+function refreshSleepStatus(showWarning = false) {
+  return invoke("get_sleep_status").then((status) => {
+    const ok = !status || status.hotkey_registered !== false;
+    setHotkeyHint(ok);
+    if (!ok && showWarning) toast("Ctrl+Enter 息屏快捷键被其他程序占用", true);
+    return ok;
+  }).catch((e) => {
+    console.warn("sleep status failed:", e);
+    return true; // 查询失败时不误报占用
+  });
+}
+
+function initSleepUI() {
+  syncSleepUI();
+  // 启动时确认固定快捷键是否注册成功（可能被别的全局热键占用）
+  refreshSleepStatus(true);
+}
+
+function syncSleepUI() {
+  state.idleSleepMinutes = normalizeIdleMinutes(state.idleSleepMinutes);
+  const idle = $("#idleSleepSelect");
+  if (idle) idle.value = String(state.idleSleepMinutes);
+}
+
+// 写回空闲时长并立即生效；快捷键在后端固定，无需传参
+function pushSleepSettings() {
+  invoke("set_sleep_settings", {
+    idleMinutes: state.idleSleepMinutes,
+    lockOnSleep: state.lockOnSleep,
+  })
+    .then(() => setTimeout(() => refreshSleepStatus(true), 150))
+    .catch((e) => toast(`息屏设置失败：${e}`, true));
 }
 
 // 写回后端昼夜配置
@@ -586,8 +652,9 @@ function bindEvents() {
   const schedInputs = [
     ["dayTempInput", "dayTemperature", (v) => Math.round(Math.max(2700, Math.min(7000, v)))],
     ["nightTempInput", "nightTemperature", (v) => Math.round(Math.max(2700, Math.min(7000, v)))],
-    ["dayBrightInput", "dayBrightness", (v) => Math.max(0.1, Math.min(1, v))],
-    ["nightBrightInput", "nightBrightness", (v) => Math.max(0.1, Math.min(1, v))],
+    // 输入框是百分比(10~100)，state 存 0~1 小数，必须除以 100（此前误按小数钳制，输入 85 被钳成 1.0）
+    ["dayBrightInput", "dayBrightness", (v) => Math.max(0.1, Math.min(1, v / 100))],
+    ["nightBrightInput", "nightBrightness", (v) => Math.max(0.1, Math.min(1, v / 100))],
     ["transitionInput", "transitionMinutes", (v) => Math.round(Math.max(0, Math.min(180, v)))],
   ];
   schedInputs.forEach(([id, key, norm]) => {
@@ -619,6 +686,28 @@ function bindEvents() {
   $("#btnRestoreAuto").addEventListener("click", () => {
     clearManualOverride();
     toast("已恢复自动调节");
+  });
+
+  // 息屏设置：空闲时长 + 是否一并锁屏，快捷键固定 Ctrl+Enter
+  $("#idleSleepSelect").addEventListener("change", (e) => {
+    state.idleSleepMinutes = Number(e.target.value) || 0;
+    pushSleepSettings();
+    scheduleSave();
+    toast(state.idleSleepMinutes ? `空闲 ${state.idleSleepMinutes} 分钟后自动息屏` : "已关闭空闲息屏");
+  });
+  $("#lockOnSleepSwitch").addEventListener("click", () => {
+    state.lockOnSleep = !state.lockOnSleep;
+    setSwitch($("#lockOnSleepSwitch"), state.lockOnSleep);
+    pushSleepSettings();
+    scheduleSave();
+    toast(state.lockOnSleep ? "息屏时将一并锁定 Windows" : "息屏时不再锁定 Windows");
+  });
+  $("#btnSleepNow").addEventListener("click", () => {
+    invoke("sleep_now")
+      .then(() => toast(state.lockOnSleep
+        ? "已发送锁屏与息屏指令"
+        : "已发送息屏指令，移动鼠标即可唤醒"))
+      .catch((e) => toast(e, true));
   });
 
   // 模板区委托：删除 / 应用模板（空槽仅为占位展示，不是新增入口）
@@ -695,21 +784,32 @@ function bindEvents() {
     scheduleSave();
   });
 
-  $("#btnClose").addEventListener("click", (ev) => {
-    // 先让关闭按钮自身失焦，避免隐藏/恢复托盘后焦点残留、按钮呈“被选中”高亮
+  const closeBtn = $("#btnClose");
+  const clearCloseHover = () => {
+    if (closeBtn) closeBtn.classList.remove("is-hovered");
+  };
+  if (closeBtn) {
+    // 用 JS 类而不是 :hover：窗口隐藏时 WebView 收不到 mouseleave，:hover 会被冻结。
+    closeBtn.addEventListener("pointerenter", () => closeBtn.classList.add("is-hovered"));
+    closeBtn.addEventListener("pointerleave", clearCloseHover);
+  }
+  closeBtn.addEventListener("click", (ev) => {
+    // 点击瞬间清掉悬停态与焦点，避免隐藏/恢复托盘后按钮看起来仍“被选中”
+    clearCloseHover();
     if (ev.currentTarget && typeof ev.currentTarget.blur === "function") ev.currentTarget.blur();
     invoke("close_main_window").catch((e) => toast(e, true));
   });
-  // 从托盘恢复时窗口重新获得焦点，主动清掉可能残留在关闭按钮上的焦点，
-  // 防止它保持高亮/被选中态（Rust 侧 show_and_clear_focus 也会做，这里是前端双保险）。
+  // 从托盘恢复或窗口失焦时，主动清掉可能残留的悬停态与焦点（Rust 侧也会清理）。
   window.addEventListener("focus", () => {
-    const btn = $("#btnClose");
-    if (btn && typeof btn.blur === "function") btn.blur();
+    clearCloseHover();
+    if (closeBtn && typeof closeBtn.blur === "function") closeBtn.blur();
     if (document.activeElement && document.activeElement !== document.body &&
         typeof document.activeElement.blur === "function") {
       document.activeElement.blur();
     }
   });
+  window.addEventListener("blur", clearCloseHover);
+  document.addEventListener("pointerleave", clearCloseHover);
 
   $("#btnUpdate").addEventListener("click", () => checkUpdate(false));
   $("#btnChangelog").addEventListener("click", () => {
@@ -717,11 +817,6 @@ function bindEvents() {
       .catch((e) => toast(e, true));
   });
 
-  $("#modalMore").addEventListener("click", () => {
-    if (latestRelease && latestRelease.url) {
-      invoke("open_external", { url: latestRelease.url }).catch((e) => toast(e, true));
-    }
-  });
   $("#btnLater").addEventListener("click", () => $("#updateModal").classList.remove("show"));
   $("#btnDownload").addEventListener("click", async () => {
     if (!latestRelease || !latestRelease.assetUrl) {
@@ -769,27 +864,12 @@ function releaseNotesToText(body) {
     .trim();
 }
 
-// 弹窗显示真实更新日志；过长则截断并显示"查看更多"
+// 弹窗显示完整更新日志，不再截断；超出弹窗范围的内容放在滚动区内查看
 function renderUpdateNotes(release) {
   const notes = $("#modalNotes");
-  const more = $("#modalMore");
   const text = releaseNotesToText(release && release.notes);
-  if (!text) {
-    notes.textContent = "新版本已发布，包含体验优化与问题修复。建议更新以获得更好的护眼体验。";
-    more.style.display = "none";
-    return;
-  }
-  if (text.length > UPDATE_NOTES_LIMIT) {
-    let cut = text.slice(0, UPDATE_NOTES_LIMIT);
-    // 优先在行末或句读处收尾，避免截断在半个句子中间
-    const lastBreak = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf("。"), cut.lastIndexOf("；"));
-    if (lastBreak > UPDATE_NOTES_LIMIT * 0.6) cut = cut.slice(0, lastBreak + 1);
-    notes.textContent = `${cut.trimEnd()}…`;
-    more.style.display = "block";
-  } else {
-    notes.textContent = text;
-    more.style.display = "none";
-  }
+  notes.textContent = text || "新版本已发布，包含体验优化与问题修复。建议更新以获得更好的护眼体验。";
+  notes.scrollTop = 0;
 }
 
 // 版本比较在后端 check_update 命令中完成（hasUpdate），前端直接采用结果
@@ -865,6 +945,9 @@ async function init() {
   if (!state.sunsetMinute) state.sunsetMinute = 18 * 60 + 30;
   if (!state.transitionMinutes) state.transitionMinutes = 40;
   if (typeof state.manualOverrideUntil !== "number") state.manualOverrideUntil = 0;
+  // 息屏字段兼容旧配置：clamp 到界面提供的选项，避免出现下拉框显示空白
+  state.idleSleepMinutes = normalizeIdleMinutes(state.idleSleepMinutes);
+  if (typeof state.lockOnSleep !== "boolean") state.lockOnSleep = false;
 
   // 版本号单点注入：以后只改 APP_VERSION 即可，HTML 中不再硬编码
   document.querySelectorAll("[data-app-version]").forEach((el) => {
@@ -891,6 +974,7 @@ async function init() {
   syncUI();
   setSwitch($("#scheduleSwitch"), state.scheduleEnabled);
   syncScheduleConfigUI();
+  initSleepUI();
   renderSchedule();
   $("#updateResult").textContent = `当前版本 v${APP_VERSION}`;
   applyNow();

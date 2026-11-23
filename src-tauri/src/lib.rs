@@ -4,6 +4,7 @@ mod gamma;
 mod overlay;
 mod schedule;
 mod settings;
+mod sleep;
 mod tray;
 mod updater;
 
@@ -31,8 +32,8 @@ pub(crate) fn show_and_clear_focus(app: &AppHandle) -> Result<(), String> {
     // 单帧 setTimeout 太早（WebView 焦点恢复晚于它），改为双帧 + 定时兜底，并显式 blur 关闭按钮。
     let clear_js = "\
 (function(){\
-  function clear(){var a=document.activeElement;if(a&&a!==document.body&&typeof a.blur==='function'){a.blur();}}\
-  var b=document.getElementById('btnClose');if(b&&typeof b.blur==='function'){b.blur();}\
+  function clear(){var a=document.activeElement;if(a&&a!==document.body&&typeof a.blur==='function'){a.blur();}var b=document.getElementById('btnClose');if(b){b.classList.remove('is-hovered');}}\
+  var b=document.getElementById('btnClose');if(b){b.classList.remove('is-hovered');if(typeof b.blur==='function'){b.blur();}}\
   requestAnimationFrame(function(){clear();requestAnimationFrame(clear);});\
   setTimeout(clear,60);\
 })();";
@@ -135,6 +136,9 @@ pub fn run() {
             schedule::set_schedule_enabled,
             schedule::set_schedule_config,
             schedule::get_schedule_curve,
+            sleep::sleep_now,
+            sleep::set_sleep_settings,
+            sleep::get_sleep_status,
         ])
         .setup(|app| {
             let settings = settings::load_from(&app.handle());
@@ -155,6 +159,8 @@ pub fn run() {
             // 启动日程调度线程 + 显示变化监听（重启后按当前时间/状态重应用）
             schedule::init();
             display::init();
+            // 启动息屏监听（空闲自动息屏 + 固定全局快捷键 Ctrl+Enter）
+            sleep::init(settings.idle_sleep_minutes, settings.lock_on_sleep);
 
             tray::setup(app)?;
 
@@ -183,6 +189,7 @@ pub fn run() {
         // 无论从托盘还是窗口退出，都恢复原始 gamma 并关闭色罩
         if let tauri::RunEvent::Exit = event {
             display::shutdown();
+            sleep::shutdown();
             gamma::reset();
             overlay::shutdown();
         }

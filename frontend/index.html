@@ -37,7 +37,7 @@
     <main class="main">
       <!-- 整条标题栏作为拖动区；close 按钮显式禁用拖动 -->
       <header class="titlebar" data-tauri-drag-region="deep">
-        <button class="win-btn close" id="btnClose" data-tauri-drag-region="false" title="隐藏到托盘">
+        <button class="win-btn close" id="btnClose" data-tauri-drag-region="false" aria-label="隐藏到托盘" data-tip="隐藏到托盘">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </header>
@@ -220,6 +220,33 @@
             </div>
           </div>
 
+          <div class="card settings-card">
+            <div class="card-heading"><span class="heading-dot"></span>息屏</div>
+            <div class="setting-row">
+              <div class="setting-copy"><strong>息屏时锁定 Windows</strong><span>开启后先锁屏再关屏，用密码或 PIN 恢复</span></div>
+              <button class="switch" id="lockOnSleepSwitch" role="switch" aria-checked="false"><span></span></button>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy"><strong>空闲后自动息屏</strong><span>无键鼠操作达到设定时长后关屏；关闭则沿用系统设置</span></div>
+              <select class="sleep-select" id="idleSleepSelect">
+                <option value="0">关闭</option>
+                <option value="5">5 分钟</option>
+                <option value="10">10 分钟</option>
+                <option value="15">15 分钟</option>
+                <option value="30">30 分钟</option>
+                <option value="60">60 分钟</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy"><strong>立即息屏快捷键</strong><span id="hotkeyHint">固定 Ctrl+Enter，全局生效</span></div>
+              <div class="hotkey-fixed"><kbd>Ctrl</kbd><span>+</span><kbd>Enter</kbd></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy"><strong>手动息屏</strong><span>立即关闭屏幕，动一下鼠标即恢复</span></div>
+              <button class="secondary-btn compact-btn" id="btnSleepNow">立即息屏</button>
+            </div>
+          </div>
+
           <div class="card about-card">
             <div class="card-heading"><span class="heading-dot"></span>关于 MyEyeCare</div>
             <div class="about-top">
@@ -289,7 +316,6 @@
       <h2>发现新版本</h2>
       <p class="modal-version" id="modalVersion">v0.3.0</p>
       <div class="modal-notes" id="modalNotes">新版本已发布，包含体验优化与问题修复。建议更新以获得更好的护眼体验。</div>
-      <button class="modal-more" id="modalMore" style="display: none;">查看完整更新日志 →</button>
       <div class="modal-error" id="updateError" style="display: none;"></div>
       <div class="modal-actions">
         <button class="secondary-btn" id="btnLater">稍后再说</button>

@@ -113,6 +113,10 @@ pub struct Settings {
     pub transition_minutes: u16,
     /// 手动临时覆盖到期时间戳（毫秒）；0 表示无覆盖
     pub manual_override_until: i64,
+    /// 空闲多少分钟后自动息屏；0 表示关闭，沿用系统设置
+    pub idle_sleep_minutes: u32,
+    /// 息屏时是否一并锁定 Windows（默认关闭）
+    pub lock_on_sleep: bool,
 }
 
 impl Default for Settings {
@@ -140,6 +144,9 @@ impl Default for Settings {
             sunset_minute: 18 * 60 + 30,
             transition_minutes: 40,
             manual_override_until: 0,
+            // 默认不自动息屏，沿用系统设置；快捷键在 sleep 模块固定为 Ctrl+Enter
+            idle_sleep_minutes: 0,
+            lock_on_sleep: false,
         }
     }
 }
@@ -194,6 +201,7 @@ pub fn load_from(app: &AppHandle) -> Settings {
     if settings.sunrise_minute == 0 { settings.sunrise_minute = 7 * 60 + 20; }
     if settings.sunset_minute == 0 { settings.sunset_minute = 18 * 60 + 30; }
     if settings.transition_minutes == 0 { settings.transition_minutes = 40; }
+    // 注意 idle_sleep_minutes=0 是有效值（沿用系统设置），不能当未初始化处理。
     settings
 }
 
@@ -208,6 +216,8 @@ pub fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Strin
     if settings.custom_templates.len() > 3 {
         settings.custom_templates.truncate(3);
     }
+    // 后端兜底：空闲时长上限 24 小时，避免异常配置导致计时溢出。
+    settings.idle_sleep_minutes = settings.idle_sleep_minutes.min(1440);
     let text = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     std::fs::write(config_path(&app), text).map_err(|e| e.to_string())?;
     set_current(&settings);

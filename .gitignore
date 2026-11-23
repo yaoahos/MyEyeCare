@@ -24,6 +24,7 @@ desktop.ini
 # 本地预览截图与临时文件
 .workbuddy/
 frontend/_preview_*.html
+/*预览*.png
 
 # 凭证与本地环境配置（防止误传）
 .env
