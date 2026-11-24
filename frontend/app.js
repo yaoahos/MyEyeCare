@@ -2,7 +2,7 @@
 
 // 检查更新与更新日志指向同一开源仓库
 const UPDATE_REPO = "yaoahos/MyEyeCare";
-const APP_VERSION = "1.0.2";
+const APP_VERSION = "1.0.3";
 
 const $ = (selector) => document.querySelector(selector);
 const invoke = (cmd, args = {}) => {
@@ -896,9 +896,9 @@ async function checkUpdate(isStartup) {
         result.textContent = `当前已是最新版本（${APP_VERSION}）`;
       }
     }
-    if (isStartup && hasUpdate) {
-      // 启动最小化时窗口隐藏在托盘，先唤起主窗口，否则弹窗用户看不到
-      invoke("show_main_window").catch(() => {});
+    if (hasUpdate) {
+      // 启动检查时窗口可能藏在托盘，先唤起；手动检查时窗口已在前台，调用无副作用
+      if (isStartup) invoke("show_main_window").catch(() => {});
       $("#modalVersion").textContent = `v${latest}`;
       renderUpdateNotes(info);
       $("#updateModal").classList.add("show");
