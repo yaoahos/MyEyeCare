@@ -151,8 +151,10 @@ pub fn run() {
 
             // 先写入期望状态，再启动色罩窗口线程，避免启动时序竞态
             overlay::init();
-            // 恢复上次的护眼效果：先存用户配置快照，再按“此刻生效值”应用
-            gamma::apply(&settings);
+            // 恢复上次的护眼效果：先存用户配置快照，再按“此刻生效值”只写一次屏。
+            // 不要在这里调 gamma::apply——它会用手动值先写一次，日程开启时紧接着
+            // apply_effective 又写一次生效值，两次 SetDeviceGammaRamp 会让驱动跳变。
+            settings::set_current(&settings);
             schedule::set_override_until(settings.manual_override_until);
             let eff = schedule::effective(&settings);
             gamma::apply_effective(&eff);

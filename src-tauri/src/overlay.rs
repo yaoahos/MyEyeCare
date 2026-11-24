@@ -290,6 +290,23 @@ extern "system" fn overlay_proc(
             }
             win::WM_MEC_REFRESH | win::WM_DISPLAYCHANGE | win::WM_DPICHANGED => {
                 sync_window(hwnd);
+                // sync_window 的幂等判断在状态未变时直接返回，不会重新置顶。
+                // display 模块的 refresh 目的正是把被其它置顶窗口压住的遮罩恢复到顶层，
+                // 因此这里必须显式再置顶一次。SWP_NOMOVE|NOSIZE|NOACTIVATE 只改 Z 序，
+                // 不触发几何/可见性变化，也不会闪烁。
+                if DESIRED_SHOW.load(Ordering::SeqCst) != 0
+                    && DESIRED_ALPHA.load(Ordering::SeqCst) > 0
+                {
+                    win::SetWindowPos(
+                        hwnd,
+                        win::hwnd_topmost(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        win::SWP_NOMOVE | win::SWP_NOSIZE | win::SWP_NOACTIVATE,
+                    );
+                }
                 0
             }
             win::WM_MEC_QUIT => {

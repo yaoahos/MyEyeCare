@@ -316,11 +316,6 @@ fn apply_inner(settings: &Settings, save_snapshot: bool, force: bool) -> usize {
     applied
 }
 
-/// 应用用户配置（会更新快照）。用于启动时和前端手动调节。
-pub fn apply(settings: &Settings) {
-    apply_inner(settings, true, false);
-}
-
 /// 应用计算后的生效值，不写快照。用于日程 tick：参数没变就跳过写屏。
 pub fn apply_effective(settings: &Settings) {
     apply_inner(settings, false, false);
