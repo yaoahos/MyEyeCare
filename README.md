@@ -14,10 +14,13 @@ MyEyeCare 是一个轻量级的 Windows 护眼小工具。它通过亮度、色�
 
 ## 界面预览
 
-| 页面 | 预览                                                                                              |
-|:----:|:-------------------------------------------------------------------------------------------------:|
-| 调节 | <img src="docs/images/01-adjust.png" width="360" alt="MyEyeCare 调节页">                          |
-| 设置 | <img src="docs/images/02-settings.png" width="360" alt="MyEyeCare 设置页">                        |
+**调节页**
+
+<img src="docs/images/01-adjust.png" width="100%" alt="MyEyeCare 调节页">
+
+**设置页**
+
+<img src="docs/images/02-settings.png" width="100%" alt="MyEyeCare 设置页">
 
 ---
 
