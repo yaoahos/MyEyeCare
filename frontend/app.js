@@ -2,7 +2,7 @@
 
 // 检查更新与更新日志指向同一开源仓库
 const UPDATE_REPO = "yaoahos/MyEyeCare";
-const APP_VERSION = "1.0.3";
+const APP_VERSION = "1.0.4";
 
 const $ = (selector) => document.querySelector(selector);
 const invoke = (cmd, args = {}) => {
@@ -872,14 +872,25 @@ function renderUpdateNotes(release) {
   notes.scrollTop = 0;
 }
 
+// 检查提示只做临时反馈，显示在「更新日志」按钮右侧，几秒后自动收起
+let updateHintTimer = null;
+function showUpdateHint(message, kind) {
+  const el = $("#updateResult");
+  if (updateHintTimer) clearTimeout(updateHintTimer);
+  el.className = "update-result" + (kind ? " " + kind : "") + " show";
+  el.textContent = message;
+  updateHintTimer = setTimeout(() => {
+    el.classList.remove("show");
+    el.textContent = "";
+    updateHintTimer = null;
+  }, 4000);
+}
+
 // 版本比较在后端 check_update 命令中完成（hasUpdate），前端直接采用结果
 async function checkUpdate(isStartup) {
   const btn = $("#btnUpdate");
-  const result = $("#updateResult");
-  if (!isStartup) {
-    btn.disabled = true;
-    result.textContent = "正在检查…";
-  }
+  if (!isStartup) btn.disabled = true;
+  showUpdateHint("正在检查…");
   try {
     // 检查与下载都收拢到后端命令：后端负责 GitHub 访问、限流处理与安装包直链解析
     const info = await invoke("check_update", { appVersion: APP_VERSION });
@@ -887,29 +898,20 @@ async function checkUpdate(isStartup) {
     latestRelease = info;
     const hasUpdate = !!info.hasUpdate;
     const latest = info.latest || "";
-    if (!isStartup) {
-      if (hasUpdate) {
-        result.className = "update-result warn";
-        result.textContent = `发现新版本 v${latest}`;
-      } else {
-        result.className = "update-result ok";
-        result.textContent = `当前已是最新版本（${APP_VERSION}）`;
-      }
-    }
     if (hasUpdate) {
+      showUpdateHint(`发现新版本 v${latest}`, "warn");
       // 启动检查时窗口可能藏在托盘，先唤起；手动检查时窗口已在前台，调用无副作用
       if (isStartup) invoke("show_main_window").catch(() => {});
       $("#modalVersion").textContent = `v${latest}`;
       renderUpdateNotes(info);
       $("#updateModal").classList.add("show");
+    } else {
+      showUpdateHint(`当前已是最新版本（${APP_VERSION}）`, "ok");
     }
   } catch (error) {
     console.warn("update check failed:", error);
-    if (!isStartup) {
-      result.className = "update-result";
-      const msg = typeof error === "string" ? error : "";
-      result.textContent = msg || "暂时无法获取更新信息，请检查网络或更新源配置";
-    }
+    const msg = typeof error === "string" ? error : "";
+    showUpdateHint(msg || "暂时无法获取更新信息，请检查网络或更新源配置");
   } finally {
     btn.disabled = false;
   }
@@ -976,7 +978,6 @@ async function init() {
   syncScheduleConfigUI();
   initSleepUI();
   renderSchedule();
-  $("#updateResult").textContent = `当前版本 v${APP_VERSION}`;
   applyNow();
   // 日程时间指针与覆盖状态每 30 秒刷新；覆盖到期后自动把界面拉回自动值
   let wasOverridden = state.manualOverrideUntil > Date.now();
