@@ -173,7 +173,11 @@ pub fn set_manual_override(until: i64) {
     set_override_until(until);
 }
 
-/// 前端修改昼夜两态参数后写回：更新快照、清阈值缓存并立即按新配置生效。
+/// 前端修改昼夜两态参数后写回：只更新快照与阈值缓存，不在此写 gamma。
+///
+/// 写屏统一交给前端随后的 applyNow -> apply_effect，用完整的前端 state 一次落地。
+/// 这里若用后端快照临时 apply_effective，会与并发的 apply_effect 抢写 gamma：
+/// 后端快照可能是旧的温度/亮度，晚落地时把颜色写回旧值且之后无人纠正。
 #[tauri::command]
 pub fn set_schedule_config(config: ScheduleConfig) {
     let Some(mut base) = crate::settings::current() else {
@@ -190,8 +194,6 @@ pub fn set_schedule_config(config: ScheduleConfig) {
     if let Ok(mut guard) = LAST_APPLIED.lock() {
         *guard = None;
     }
-    let eff = effective(&base);
-    crate::gamma::apply_effective(&eff);
 }
 
 #[derive(serde::Deserialize)]
@@ -250,7 +252,11 @@ pub struct EffectiveView {
     pub softness: u32,
 }
 
-/// 前端切换日程开关：写入快照并立即按新状态应用。
+/// 前端切换日程开关：只更新快照与阈值缓存，不在此写 gamma。
+///
+/// 与 set_schedule_config 同理，写屏统一由前端的 applyNow 完成。
+/// 切模板时本命令与 apply_effect 并发，若这里用后端旧快照写一次 gamma，
+/// 晚落地就会把模板颜色写回旧值，表现为“切模板后颜色变了却不恢复”。
 #[tauri::command]
 pub fn set_schedule_enabled(enabled: bool) {
     let Some(mut base) = crate::settings::current() else {
@@ -261,8 +267,6 @@ pub fn set_schedule_enabled(enabled: bool) {
     if let Ok(mut guard) = LAST_APPLIED.lock() {
         *guard = None;
     }
-    let eff = effective(&base);
-    crate::gamma::apply_effective(&eff);
 }
 
 /// 应用启动时调用一次：启动调度线程。

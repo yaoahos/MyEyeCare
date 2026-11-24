@@ -204,7 +204,7 @@ function renderTemplates() {
   $("#templateGrid").innerHTML = html.join("");
 }
 
-function applyTemplate(id) {
+async function applyTemplate(id) {
   const tpl = allTemplates().find((t) => t.id === id);
   if (!tpl) return;
   // 模板是固定配置，与按时间自动调节互斥：应用模板时关闭自动日程，
@@ -214,9 +214,10 @@ function applyTemplate(id) {
     state.scheduleEnabled = false;
     state.manualOverrideUntil = 0;
     setSwitch($("#scheduleSwitch"), false);
-    // 只清覆盖标记，不调 clearManualOverride()——后者会异步拉回日程值覆盖即将设置的模板值
-    invoke("set_manual_override", { until: 0 }).catch(() => {});
-    invoke("set_schedule_enabled", { enabled: false }).catch(() => {});
+    // 必须等状态命令落地后再写屏：这些命令会 set_current 覆盖后端快照，
+    // 若与 apply_effect 并发，晚落地的一次会用旧快照污染状态或触发回写。
+    await invoke("set_manual_override", { until: 0 }).catch(() => {});
+    await invoke("set_schedule_enabled", { enabled: false }).catch(() => {});
     updateScheduleNow();
   }
   state.temperature = tpl.temperature;
@@ -549,17 +550,29 @@ function clearManualOverride() {
 }
 
 /* ---------- 效果与持久化 ---------- */
-async function applyNow() {
-  try {
-    await invoke("apply_effect", { settings: state });
-  } catch (e) {
-    toast(`应用失败：${e}`, true);
-  }
+// 写屏串行化：切模板/切日程时会有多次状态更新与 apply 请求同时发出，
+// 若不排队，后端 apply_effect 可能乱序落地，旧 state 晚写入就把颜色写回旧值，
+// 且之后无命令再纠正。这里让每次 apply 都接在上一次完成后执行，
+// 保证最后一次提交的一定是最终 state。
+let applyChain = Promise.resolve();
+function applyNow() {
+  applyChain = applyChain.then(async () => {
+    try {
+      await invoke("apply_effect", { settings: state });
+    } catch (e) {
+      toast(`应用失败：${e}`, true);
+    }
+  });
+  return applyChain;
 }
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    invoke("save_settings", { settings: state }).catch((e) => toast(`保存失败：${e}`, true));
+    // save_settings 也会写后端快照，必须排在 apply 链之后，
+    // 否则它可能早于最后一次 apply 落地，把快照写成中间态。
+    applyChain = applyChain.then(() =>
+      invoke("save_settings", { settings: state }).catch((e) => toast(`保存失败：${e}`, true))
+    );
   }, 400);
 }
 
