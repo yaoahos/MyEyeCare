@@ -1,8 +1,7 @@
 //! 显示状态监听。
 //!
-//! Windows 在息屏唤醒、屏幕重启、分辨率/DPI 变化后会重置显卡 gamma；
-//! 遮罩窗口也可能失去置顶层级或仍停留在旧几何。这里用一个隐藏窗口接收
-//! 系统广播（含显示器电源通知），分级延迟重应用当前配置；部分驱动完全不广播，
+//! Windows 在息屏唤醒、屏幕重启、分辨率变化后会重置显卡 gamma。
+//! 这里用一个隐藏窗口接收系统广播（含显示器电源通知），分级延迟重应用当前配置；部分驱动完全不广播，
 //! 因此再加低频定时兜底。
 
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -71,10 +70,6 @@ mod win {
     pub const WM_TIMER: u32 = 0x0113;
     pub const WM_APP: u32 = 0x8000;
     pub const WM_MEC_QUIT: u32 = WM_APP + 5;
-    /// DPI 变化时只同步遮罩几何，不重写 gamma（gamma 与 DPI 无关，重复写会闪）
-    pub const TIMER_GEOMETRY_ONLY: usize = 5;
-    pub const GEOMETRY_DELAY_MS: u32 = 250;
-
     pub const PBT_APMRESUMECRITICAL: usize = 0x0006;
     pub const PBT_APMRESUMESUSPEND: usize = 0x0007;
     pub const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
@@ -170,7 +165,7 @@ unsafe fn schedule_reapply(hwnd: win::Hwnd) {
     win::SetTimer(hwnd, win::TIMER_REAPPLY_3, win::SLOW_DELAY_MS, std::ptr::null_mut());
 }
 
-/// 完整重应用：强制重写 gamma + 遮罩刷新。只用于明确的息屏/电源/分辨率变化事件。
+/// 完整重应用：按需要在息屏/电源/分辨率变化后重写 gamma。
 fn reapply() {
     let Some(settings) = crate::settings::current() else {
         return;
@@ -185,7 +180,6 @@ fn reapply() {
     if crate::gamma::needs_restore(&eff) {
         crate::gamma::apply_effective_forced(&eff);
     }
-    crate::overlay::refresh();
 }
 
 /// 周期兜底：仅当检测到 gamma 被外部重置到与目标明显不同时才恢复，
@@ -197,19 +191,14 @@ fn periodic_check() {
     if !settings.enabled {
         return;
     }
-    // 必须与真正写屏时一样用“生效值”比较：开启日程时，settings 里存的是手动
-    // 配置，直接拿它检测会把正常插值结果误判为被重置，导致每轮兜底都重写 gamma。
-    let eff = crate::schedule::effective(&settings);
-    if !crate::gamma::needs_restore(&eff) {
+    // 用“上次实际写入的 ramp”作基准判断是否被外部改动，而不是用当前时刻的
+    // 插值目标：开启日程时后者持续漂移，会让周期检测在过渡期每几十秒误判一次
+    // 并 force 重写 gamma，产生可见微闪。日程插值跟随由 schedule::tick 负责。
+    if !crate::gamma::externally_reset() {
         return;
     }
+    let eff = crate::schedule::effective(&settings);
     crate::gamma::apply_effective_forced(&eff);
-    crate::overlay::refresh();
-}
-
-/// 仅同步遮罩几何：DPI 变化/窗口跨屏拖动走这里，不碰 gamma，避免闪烁。
-fn refresh_geometry_only() {
-    crate::overlay::refresh();
 }
 
 #[cfg(target_os = "windows")]
@@ -226,18 +215,8 @@ extern "system" fn watcher_proc(
                 schedule_reapply(hwnd);
                 0
             }
-            win::WM_DPICHANGED => {
-                // DPI 变化（常见于拖动窗口跨屏）不改 gamma，只去抖同步遮罩几何。
-                // 若也重写 gamma，驱动会每次跳变一次亮度，表现为“闪来闪去”。
-                win::KillTimer(hwnd, win::TIMER_GEOMETRY_ONLY);
-                win::SetTimer(
-                    hwnd,
-                    win::TIMER_GEOMETRY_ONLY,
-                    win::GEOMETRY_DELAY_MS,
-                    std::ptr::null_mut(),
-                );
-                0
-            }
+            // DPI 变化（拖动窗口跨屏）不影响 gamma 色表，无需重应用。
+            win::WM_DPICHANGED => 0,
             win::WM_POWERBROADCAST => {
                 match wparam {
                     // 系统睡眠 / 休眠唤醒
@@ -277,10 +256,6 @@ extern "system" fn watcher_proc(
                     win::TIMER_REAPPLY_3 => {
                         win::KillTimer(hwnd, win::TIMER_REAPPLY_3);
                         reapply();
-                    }
-                    win::TIMER_GEOMETRY_ONLY => {
-                        win::KillTimer(hwnd, win::TIMER_GEOMETRY_ONLY);
-                        refresh_geometry_only();
                     }
                     win::TIMER_PERIODIC => periodic_check(),
                     _ => {}

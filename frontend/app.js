@@ -2,7 +2,7 @@
 
 // 检查更新与更新日志指向同一开源仓库
 const UPDATE_REPO = "yaoahos/MyEyeCare";
-const APP_VERSION = "1.0.4";
+const APP_VERSION = "1.0.5";
 
 const $ = (selector) => document.querySelector(selector);
 const invoke = (cmd, args = {}) => {
@@ -14,30 +14,19 @@ const invoke = (cmd, args = {}) => {
   return Promise.resolve(undefined);
 };
 
-const DEFAULT_OVERLAY_COLOR = "#8FD6BC";
 const DEFAULT_SOFTNESS = 45;
 const MAX_CUSTOM = 3;
 
-// 每套模板自带遮罩配置，切换时亮度 / 色温 / 柔和度 / 遮罩一起生效。
-// 设计原则：按使用场景由日间到深夜递进——色温递减、亮度递减、柔和度与遮罩递增；
-// 色卡取各自场景的代表色（蓝→绿→黄→紫→橙→红），一眼即可区分，不与遮罩色混为一谈。
+// 每套模板切换时亮度 / 色温 / 柔和度一起生效。
+// 设计原则：按使用场景由日间到深夜递进——色温递减、亮度递减、柔和度递增；
+// 色卡取各自场景的代表色（蓝→绿→黄→紫→橙→红），一眼即可区分。
 const TEMPLATES = [
-  { id: "standard",  name: "标准日间", temperature: 5000, brightness: 0.92, softness: 45, swatch: ["#d6ecfb", "#8fc6ea"], overlayEnabled: true,  overlayColor: "#8FD6BC", overlayStrength: 12 },
-  { id: "focus",     name: "专注工作", temperature: 4800, brightness: 0.90, softness: 50, swatch: ["#d4f0df", "#7fd0a8"], overlayEnabled: true,  overlayColor: "#8FD6BC", overlayStrength: 16 },
-  { id: "reading",   name: "阅读模式", temperature: 4500, brightness: 0.86, softness: 55, swatch: ["#fff0c9", "#eccf8c"], overlayEnabled: true,  overlayColor: "#FFD98A", overlayStrength: 20 },
-  { id: "movie",     name: "影院模式", temperature: 4100, brightness: 0.70, softness: 55, swatch: ["#eadffa", "#b9a2e6"], overlayEnabled: true,  overlayColor: "#B6A6E8", overlayStrength: 24 },
-  { id: "night",     name: "夜间护眼", temperature: 3600, brightness: 0.64, softness: 60, swatch: ["#ffdcc0", "#f2a874"], overlayEnabled: true,  overlayColor: "#FFB060", overlayStrength: 30 },
-  { id: "deepnight", name: "深夜模式", temperature: 3000, brightness: 0.50, softness: 60, swatch: ["#f7cfc4", "#dd8b78"], overlayEnabled: true,  overlayColor: "#FF9E80", overlayStrength: 40 },
-];
-
-// 柔色遮罩预设（Rust 端按 #RRGGBB 解析为 COLORREF）
-const OVERLAY_COLORS = [
-  { name: "暖黄", hex: "#FFD98A" },
-  { name: "琥珀", hex: "#FFB060" },
-  { name: "珊瑚", hex: "#FF9E80" },
-  { name: "玫瑰", hex: "#F2A0BE" },
-  { name: "薰衣草", hex: "#B6A6E8" },
-  { name: "薄荷", hex: "#8FD6BC" },
+  { id: "standard",  name: "标准日间", temperature: 5000, brightness: 0.92, softness: 45, swatch: ["#d6ecfb", "#8fc6ea"] },
+  { id: "focus",     name: "专注工作", temperature: 4800, brightness: 0.90, softness: 50, swatch: ["#d4f0df", "#7fd0a8"] },
+  { id: "reading",   name: "阅读模式", temperature: 4500, brightness: 0.86, softness: 55, swatch: ["#fff0c9", "#eccf8c"] },
+  { id: "movie",     name: "影院模式", temperature: 4100, brightness: 0.70, softness: 55, swatch: ["#eadffa", "#b9a2e6"] },
+  { id: "night",     name: "夜间护眼", temperature: 3600, brightness: 0.64, softness: 60, swatch: ["#ffdcc0", "#f2a874"] },
+  { id: "deepnight", name: "深夜模式", temperature: 3000, brightness: 0.50, softness: 60, swatch: ["#f7cfc4", "#dd8b78"] },
 ];
 
 const state = {
@@ -49,13 +38,10 @@ const state = {
   startMinimized: true,
   checkUpdatesOnStartup: true,
   templateId: "standard",
-  overlayEnabled: true,
-  overlayStrength: 12,
-  overlayColor: DEFAULT_OVERLAY_COLOR,
   customTemplates: [],
   scheduleEnabled: false,
   // 昼夜两态日程（参考 LightBulb）：只设两组色温/亮度 + 日出日落 + 过渡时长
-  dayTemperature: 6600,
+  dayTemperature: 6500,
   dayBrightness: 1.0,
   nightTemperature: 3900,
   nightBrightness: 0.85,
@@ -97,34 +83,16 @@ function matchTemplate() {
     t.temperature === state.temperature
     && Math.abs(t.brightness - state.brightness) < 0.0001
     && Number(t.softness ?? 0) === Number(state.softness ?? 0)
-    && Boolean(t.overlayEnabled) === state.overlayEnabled
-    && Number(t.overlayStrength) === state.overlayStrength
-    && String(t.overlayColor).toUpperCase() === String(state.overlayColor).toUpperCase()
   );
 }
 
-// 自定义模板的色卡直接取其遮罩颜色，让色卡真正反映模板效果
-function lighten(hex, ratio = 0.62) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
-  if (!m) return "#eef4ef";
-  const n = parseInt(m[1], 16);
-  const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  return `#${rgb.map((c) => Math.round(c + (255 - c) * ratio).toString(16).padStart(2, "0")).join("")}`;
-}
 function swatchForTemplate(t) {
-  // 内置模板用各自独立的场景色，颜色区分明显；自定义模板没有独立色卡时再按遮罩色生成
+  // 内置模板用各自独立的场景色，颜色区分明显；自定义模板按色温生成
   if (Array.isArray(t.swatch) && t.swatch.length === 2) return t.swatch;
-  if (t.overlayEnabled && t.overlayColor) return [lighten(t.overlayColor), t.overlayColor];
   if (t.temperature <= 3500) return ["#ffe0c2", "#f0b684"];
   if (t.temperature <= 4500) return ["#fff1d6", "#e7c79b"];
   if (t.temperature <= 5500) return ["#f2f6e6", "#cfdcb6"];
   return ["#e6f2fb", "#b8d6ea"];
-}
-
-function renderColorSwatches() {
-  $("#colorSwatches").innerHTML = OVERLAY_COLORS.map((c) => `
-    <button class="color-swatch" data-hex="${c.hex}" style="background:${c.hex}" title="${c.name}"></button>
-  `).join("");
 }
 
 function syncUI() {
@@ -161,17 +129,6 @@ function syncUI() {
   setSwitch($("#minimizedSwitch"), state.startMinimized);
   setSwitch($("#lockOnSleepSwitch"), state.lockOnSleep);
 
-  // 柔色遮罩
-  setSwitch($("#overlaySwitch"), state.overlayEnabled);
-  $("#overlayBody").classList.toggle("disabled", !state.overlayEnabled);
-  $("#strengthValue").textContent = `${state.overlayStrength}%`;
-  const sRange = $("#strengthRange");
-  sRange.value = state.overlayStrength;
-  sRange.style.setProperty("--pct", `${state.overlayStrength}%`);
-  document.querySelectorAll(".color-swatch").forEach((sw) => {
-    sw.classList.toggle("active", sw.dataset.hex === String(state.overlayColor).toUpperCase());
-  });
-
   document.querySelectorAll(".template").forEach((card) => {
     card.classList.toggle("active", card.dataset.id === state.templateId);
   });
@@ -180,14 +137,13 @@ function syncUI() {
 /* ---------- 模板网格 ---------- */
 function templateCardHtml(t, custom) {
   const swatch = swatchForTemplate(t);
-  const overlayTip = t.overlayEnabled ? `遮罩 ${t.overlayStrength}%` : "无遮罩";
   const del = custom
     ? `<span class="template-del" data-action="delete" data-id="${escapeHtml(t.id)}" title="删除模板">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
        </span>`
     : "";
   return `
-    <button class="template" data-id="${escapeHtml(t.id)}" title="${escapeHtml(t.name)} · ${overlayTip}">
+    <button class="template" data-id="${escapeHtml(t.id)}" title="${escapeHtml(t.name)}">
       ${del}
       <div class="template-swatch" style="background:linear-gradient(145deg, ${swatch[0]}, ${swatch[1]})"></div>
       <div class="template-name">${escapeHtml(t.name)}</div>
@@ -223,9 +179,6 @@ async function applyTemplate(id) {
   state.temperature = tpl.temperature;
   state.brightness = tpl.brightness;
   state.softness = typeof tpl.softness === "number" ? tpl.softness : DEFAULT_SOFTNESS;
-  state.overlayEnabled = Boolean(tpl.overlayEnabled);
-  state.overlayColor = tpl.overlayColor || DEFAULT_OVERLAY_COLOR;
-  state.overlayStrength = typeof tpl.overlayStrength === "number" ? tpl.overlayStrength : 18;
   state.enabled = true;
   syncUI();
   applyNow();
@@ -242,8 +195,7 @@ function openSaveModal() {
     toast(`最多保存 ${MAX_CUSTOM} 个，请先删除一个`, true);
     return;
   }
-  const mask = state.overlayEnabled ? `遮罩 ${state.overlayStrength}%` : "无遮罩";
-  $("#savePreview").textContent = `当前：${state.temperature} K · ${Math.round(state.brightness * 100)}% · 柔和 ${state.softness}% · ${mask}`;
+  $("#savePreview").textContent = `当前：${state.temperature} K · ${Math.round(state.brightness * 100)}% · 柔和 ${state.softness}%`;
   $("#templateNameInput").value = "";
   $("#saveModal").classList.add("show");
   setTimeout(() => $("#templateNameInput").focus(), 50);
@@ -263,9 +215,6 @@ function confirmSaveTemplate() {
     temperature: state.temperature,
     brightness: state.brightness,
     softness: state.softness,
-    overlayEnabled: state.overlayEnabled,
-    overlayColor: state.overlayColor,
-    overlayStrength: state.overlayStrength,
   });
   $("#saveModal").classList.remove("show");
   renderTemplates();
@@ -647,7 +596,7 @@ function bindEvents() {
     scheduleSave();
   });
   $("#btnSchedulePreset").addEventListener("click", () => {
-    state.dayTemperature = 6600;
+    state.dayTemperature = 6500;
     state.dayBrightness = 1.0;
     state.nightTemperature = 3900;
     state.nightBrightness = 0.85;
@@ -663,8 +612,8 @@ function bindEvents() {
   });
   // 昼夜两态参数绑定：改动后本地重画曲线并写回后端
   const schedInputs = [
-    ["dayTempInput", "dayTemperature", (v) => Math.round(Math.max(2700, Math.min(7000, v)))],
-    ["nightTempInput", "nightTemperature", (v) => Math.round(Math.max(2700, Math.min(7000, v)))],
+    ["dayTempInput", "dayTemperature", (v) => Math.round(Math.max(2700, Math.min(6500, v)))],
+    ["nightTempInput", "nightTemperature", (v) => Math.round(Math.max(2700, Math.min(6500, v)))],
     // 输入框是百分比(10~100)，state 存 0~1 小数，必须除以 100（此前误按小数钳制，输入 85 被钳成 1.0）
     ["dayBrightInput", "dayBrightness", (v) => Math.max(0.1, Math.min(1, v / 100))],
     ["nightBrightInput", "nightBrightness", (v) => Math.max(0.1, Math.min(1, v / 100))],
@@ -770,31 +719,6 @@ function bindEvents() {
     setSwitch($("#updateCheckSwitch"), state.checkUpdatesOnStartup);
     scheduleSave();
     toast(state.checkUpdatesOnStartup ? "启动时将自动检查更新" : "已关闭启动检查更新");
-  });
-
-  $("#overlaySwitch").addEventListener("click", () => {
-    state.overlayEnabled = !state.overlayEnabled;
-    syncUI();
-    applyNow();
-    scheduleSave();
-    toast(state.overlayEnabled ? "柔色遮罩已开启" : "柔色遮罩已关闭");
-  });
-  $("#colorSwatches").addEventListener("click", (e) => {
-    const sw = e.target.closest(".color-swatch");
-    if (!sw) return;
-    state.overlayColor = sw.dataset.hex;
-    state.overlayEnabled = true;
-    syncUI();
-    applyNow();
-    scheduleSave();
-    const color = OVERLAY_COLORS.find((c) => c.hex === sw.dataset.hex);
-    toast(`已切换为${color ? color.name : "柔色"}遮罩`);
-  });
-  $("#strengthRange").addEventListener("input", (e) => {
-    state.overlayStrength = Number(e.target.value);
-    syncUI();
-    applyNow();
-    scheduleSave();
   });
 
   const closeBtn = $("#btnClose");
@@ -941,18 +865,10 @@ async function init() {
   // 兼容旧配置 / 异常数据
   if (!Array.isArray(state.customTemplates)) state.customTemplates = [];
   if (state.customTemplates.length > MAX_CUSTOM) state.customTemplates.length = MAX_CUSTOM;
-  state.customTemplates.forEach((t) => {
-    if (typeof t.overlayEnabled !== "boolean") t.overlayEnabled = false;
-    if (typeof t.overlayStrength !== "number") t.overlayStrength = 18;
-    if (typeof t.overlayColor !== "string") t.overlayColor = DEFAULT_OVERLAY_COLOR;
-  });
-  if (typeof state.overlayEnabled !== "boolean") state.overlayEnabled = false;
-  if (typeof state.overlayStrength !== "number") state.overlayStrength = 18;
-  if (typeof state.overlayColor !== "string") state.overlayColor = DEFAULT_OVERLAY_COLOR;
   if (typeof state.softness !== "number") state.softness = DEFAULT_SOFTNESS;
   if (typeof state.scheduleEnabled !== "boolean") state.scheduleEnabled = false;
   // 昼夜两态参数：旧配置没有这些字段时用默认值补齐（0 视为未初始化）
-  if (!state.dayTemperature) state.dayTemperature = 6600;
+  if (!state.dayTemperature) state.dayTemperature = 6500;
   if (!(state.dayBrightness > 0)) state.dayBrightness = 1.0;
   if (!state.nightTemperature) state.nightTemperature = 3900;
   if (!(state.nightBrightness > 0)) state.nightBrightness = 0.85;
@@ -970,7 +886,6 @@ async function init() {
   });
 
   renderTemplates();
-  renderColorSwatches();
   bindEvents();
   try {
     const portable = await invoke("is_portable");
@@ -985,6 +900,24 @@ async function init() {
     }
   } catch (e) {
     console.warn("portable/autostart query failed:", e);
+  }
+  // 启动时后端已按“此刻生效值”写过一次 gamma。此前前端无条件用磁盘配置
+  // applyNow，磁盘里的手动值与后端生效值（日程插值）不同时会把颜色覆盖回旧值，
+  // 随后启动阶梯重应用再纠正，表现为启动瞬间色温跳变（实测 4800→4751→4800）。
+  // 按与后端 effective() 相同的条件取回应生效值，让前端写入与后端一致：
+  // - 日程开启且不在手动覆盖期：用 get_effective_settings 取当前日程插值；
+  // - 其余情况：保持磁盘保存的手动值，不拉取（覆盖期内不能冲掉用户的手动调节）。
+  if (state.scheduleEnabled && !(state.manualOverrideUntil > Date.now())) {
+    try {
+      const eff = await invoke("get_effective_settings");
+      if (eff && typeof eff === "object") {
+        state.brightness = eff.brightness;
+        state.temperature = eff.temperature;
+        state.softness = eff.softness;
+      }
+    } catch (e) {
+      console.warn("get effective settings failed:", e);
+    }
   }
   syncUI();
   setSwitch($("#scheduleSwitch"), state.scheduleEnabled);

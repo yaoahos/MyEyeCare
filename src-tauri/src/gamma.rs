@@ -2,7 +2,6 @@
 //! 关键点：必须对每个物理显示设备用 CreateDCW 创建真实 DC，
 //! EnumDisplayMonitors 回调中给出的 DC 在很多驱动上会被 SetDeviceGammaRamp 静默拒绝。
 
-use crate::overlay;
 use crate::settings::Settings;
 use std::sync::Mutex;
 
@@ -227,12 +226,13 @@ fn build_ramp(brightness: f64, kelvin: u32, softness: u32) -> GammaRamp {
     let exponent = 1.0 / brightness;
     let gains = channel_gains(kelvin);
 
-    // 柔和度：gamma 层轻微抬黑位 + 中段压缩，降低对比度但不让文字发灰。
-    // lift 上限 0.03（黑位最高约 8/255，肉眼仍是黑），且亮度越低 lift 越小，
-    // 避免暗部发糊；中段压缩让中间调斜率略降，黑端/白端基本不动以保留锐度。
+    // 柔和度：gamma 层抬黑位 + 中段压缩，降低对比度但不让文字发灰。
+    // 顺序很关键：必须先压中段、再抬黑位。若反过来（先抬后压），抬上去的黑位
+    // 会被幂运算重新压回接近 0，导致“柔和度”几乎只压暗画面、抬黑位形同虚设。
+    // lift 上限 0.04（黑位约 10/255，仍是深色），白端保持 1.0 不动以保留文字锐度。
     let soft = (softness.min(100) as f64) / 100.0;
-    let lift = 0.03 * soft * brightness.max(0.5);
-    let mid_exp = 1.0 + 0.35 * soft;
+    let lift = 0.04 * soft;
+    let mid_exp = 1.0 + 0.6 * soft;
 
     let mut ramp = GammaRamp {
         red: [0; 256],
@@ -242,9 +242,9 @@ fn build_ramp(brightness: f64, kelvin: u32, softness: u32) -> GammaRamp {
     for i in 0..256usize {
         let base = (i as f64 / 255.0).powf(exponent);
         let shaped = if soft > 0.0 {
-            // 先抬黑位，再压中段；两端钳制保护
-            let lifted = lift + (1.0 - lift) * base;
-            lifted.powf(mid_exp).min(1.0)
+            // 先压中段，再线性抬黑位（保持白端 1.0）
+            let compressed = base.powf(mid_exp);
+            lift + (1.0 - lift) * compressed
         } else {
             base
         };
@@ -311,8 +311,6 @@ fn apply_inner(settings: &Settings, save_snapshot: bool, force: bool) -> usize {
         0
     };
 
-    // 色罩与 gamma 同步更新（overlay 自身也有完备的幂等判断）
-    overlay::apply(settings);
     applied
 }
 
@@ -399,6 +397,65 @@ pub fn needs_restore(settings: &Settings) -> bool {
 
 #[cfg(not(target_os = "windows"))]
 pub fn needs_restore(_settings: &Settings) -> bool {
+    false
+}
+
+/// 供周期兜底使用：判断屏幕 gamma 是否被外部改动到“与我们最后一次写入的值不同”。
+///
+/// 与 needs_restore 的区别在比较基准：needs_restore 用当前时刻重建的目标 ramp，
+/// 而日程插值会持续移动这个目标，周期检测若拿它当基准，会把正常的插值漂移
+/// 误判成“被外部重置”，在过渡期每几十秒 force 重写一次 gamma，表现为周期性微闪。
+/// 用 LAST_WRITTEN_RAMP 作基准后：
+/// - 屏幕仍是上次写入的值 → 未被外部改动 → 不写，插值跟随交给 schedule::tick；
+/// - 屏幕偏离上次写入的值 → 被驱动/外部程序重置 → 用当前生效值恢复。
+#[cfg(target_os = "windows")]
+pub fn externally_reset() -> bool {
+    let last = match LAST_WRITTEN_RAMP.lock() {
+        Ok(g) => *g,
+        Err(_) => return false,
+    };
+    let Some(last) = last else {
+        return false; // 本进程尚未写过 gamma，不误判
+    };
+    unsafe {
+        let mut index = 0u32;
+        loop {
+            let mut device: DisplayDeviceW = std::mem::zeroed();
+            device.cb = std::mem::size_of::<DisplayDeviceW>() as u32;
+            if EnumDisplayDevicesW(std::ptr::null(), index, &mut device, 0) == 0 {
+                break;
+            }
+            index += 1;
+            if device.state_flags & DISPLAY_DEVICE_ACTIVE == 0 {
+                continue;
+            }
+            let dc = CreateDCW(
+                std::ptr::null(),
+                device.device_name.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+            );
+            if dc.is_null() {
+                continue;
+            }
+            let mut current = GammaRamp {
+                red: [0; 256],
+                green: [0; 256],
+                blue: [0; 256],
+            };
+            let readable =
+                GetDeviceGammaRamp(dc, &mut current as *mut GammaRamp as *mut c_void) != 0;
+            DeleteDC(dc);
+            if !readable || ramp_differs(&current, &last, 96) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn externally_reset() -> bool {
     false
 }
 

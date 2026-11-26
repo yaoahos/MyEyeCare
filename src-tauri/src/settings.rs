@@ -24,12 +24,6 @@ pub struct CustomTemplate {
     pub name: String,
     pub temperature: u32,
     pub brightness: f64,
-    /// 该模板是否带柔色遮罩
-    pub overlay_enabled: bool,
-    /// 遮罩颜色（#RRGGBB）
-    pub overlay_color: String,
-    /// 遮罩强度 0~100
-    pub overlay_strength: u32,
 }
 
 impl Default for CustomTemplate {
@@ -39,9 +33,6 @@ impl Default for CustomTemplate {
             name: String::new(),
             temperature: 6500,
             brightness: 1.0,
-            overlay_enabled: false,
-            overlay_color: "#FFD98A".to_string(),
-            overlay_strength: 18,
         }
     }
 }
@@ -84,12 +75,6 @@ pub struct Settings {
     pub check_updates_on_startup: bool,
     /// 当前选中的模板 id
     pub template_id: String,
-    /// 是否启用全屏柔色遮罩（gamma 之外的增强手段）
-    pub overlay_enabled: bool,
-    /// 遮罩强度 0~100
-    pub overlay_strength: u32,
-    /// 遮罩颜色（#RRGGBB）
-    pub overlay_color: String,
     /// 用户保存的自定义模板（最多 3 个）
     pub custom_templates: Vec<CustomTemplate>,
     /// 是否启用按时间自动调节
@@ -130,13 +115,10 @@ impl Default for Settings {
             start_minimized: true,
             check_updates_on_startup: true,
             template_id: "standard".to_string(),
-            overlay_enabled: true,
-            overlay_strength: 12,
-            overlay_color: "#8FD6BC".to_string(),
             custom_templates: Vec::new(),
             schedule_enabled: false,
             schedule_points: Vec::new(),
-            day_temperature: 6600,
+            day_temperature: 6500,
             day_brightness: 1.0,
             night_temperature: 3900,
             night_brightness: 0.85,
@@ -180,7 +162,7 @@ pub fn load_from(app: &AppHandle) -> Settings {
     };
     let mut settings = serde_json::from_str::<Settings>(&text).unwrap_or_default();
     // 老版本配置没有 softness 字段，且仍停留在旧的偏亮偏冷默认值时，
-    // 平滑迁移到新护眼默认；用户自定义过的参数（模板/开关/遮罩色等）保持不变。
+    // 平滑迁移到新护眼默认；用户自定义过的参数（模板/开关等）保持不变。
     let is_legacy_default = !text.contains("\"softness\"")
         && (settings.brightness - 1.0).abs() < 0.001
         && settings.temperature == 5800;
@@ -189,12 +171,11 @@ pub fn load_from(app: &AppHandle) -> Settings {
         settings.brightness = defaults.brightness;
         settings.temperature = defaults.temperature;
         settings.softness = defaults.softness;
-        settings.overlay_strength = defaults.overlay_strength;
         settings.template_id = defaults.template_id;
     }
     // 老配置缺少昼夜两态字段时（值为 0），用 LightBulb 风格默认值补齐。
     // 用 0 作为“未初始化”标志：这些字段的合理取值均 > 0。
-    if settings.day_temperature == 0 { settings.day_temperature = 6600; }
+    if settings.day_temperature == 0 { settings.day_temperature = 6500; }
     if settings.day_brightness <= 0.0 { settings.day_brightness = 1.0; }
     if settings.night_temperature == 0 { settings.night_temperature = 3900; }
     if settings.night_brightness <= 0.0 { settings.night_brightness = 0.85; }

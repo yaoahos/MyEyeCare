@@ -224,7 +224,6 @@ svg { width: 100%; height: 100%; display: block; }
 .control-icon { width: 30px; height: 30px; padding: 6px; border-radius: 9px; flex-shrink: 0; }
 .control-icon.sky { color: var(--sky); background: rgba(58, 155, 208, 0.14); }
 .control-icon.grass { color: var(--green); background: rgba(47, 158, 107, 0.14); }
-.control-icon.tint { color: #d68c4f; background: rgba(235, 170, 100, 0.18); }
 .control-icon.soft { color: #8a7fc0; background: rgba(150, 135, 200, 0.16); }
 .control-title { flex: 1; }
 .control-title strong { font-size: 13.5px; color: var(--label); font-weight: 680; }
@@ -245,24 +244,6 @@ input[type="range"].temp-range {
   background: linear-gradient(90deg, #f3a95e 0%, #ffd9a0 22%, #fff6dc 48%, #dff0fb 74%, #9ec9e8 100%);
 }
 .range-labels { display: flex; justify-content: space-between; margin-top: 7px; font-size: 11.5px; color: var(--desc); font-weight: 520; }
-
-/* ---------------- 独立柔色遮罩卡片 ---------------- */
-.overlay-body { transition: opacity .18s ease; }
-.overlay-body.disabled { opacity: .38; pointer-events: none; }
-.color-swatches { display: flex; gap: 10px; }
-.color-swatch {
-  width: 21px; height: 21px; border-radius: 50%; flex-shrink: 0;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 1px 4px rgba(40, 90, 65, 0.18);
-  transition: transform .14s ease, box-shadow .14s ease;
-}
-.color-swatch:hover { transform: scale(1.16); }
-.color-swatch.active { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--green), 0 2px 6px rgba(40, 90, 65, 0.2); }
-.strength-line { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.strength-line > span { font-size: 11.5px; color: var(--desc); font-weight: 520; flex-shrink: 0; }
-.strength-line input[type="range"] { flex: 1; height: 6px; }
-.strength-line input[type="range"]::-webkit-slider-thumb { width: 15px; height: 15px; }
-.strength-line b { width: 30px; text-align: right; font-size: 11px; font-weight: 620; color: var(--green); font-variant-numeric: tabular-nums; }
 
 /* ---------------- 模板色卡：上色块 + 下介绍（3x3） ---------------- */
 .template-panel { padding: 12px 17px 13px; display: flex; flex-direction: column; min-height: 0; }

@@ -65,12 +65,12 @@
               <div class="schedule-params">
                 <div class="phase-row day">
                   <span class="phase-label"><i class="phase-dot"></i>白天</span>
-                  <label class="phase-field"><span>色温</span><input type="number" id="dayTempInput" min="2700" max="7000" step="50" /><em>K</em></label>
+                  <label class="phase-field"><span>色温</span><input type="number" id="dayTempInput" min="2700" max="6500" step="50" /><em>K</em></label>
                   <label class="phase-field"><span>亮度</span><input type="number" id="dayBrightInput" min="10" max="100" step="1" /><em>%</em></label>
                 </div>
                 <div class="phase-row night">
                   <span class="phase-label"><i class="phase-dot"></i>夜晚</span>
-                  <label class="phase-field"><span>色温</span><input type="number" id="nightTempInput" min="2700" max="7000" step="50" /><em>K</em></label>
+                  <label class="phase-field"><span>色温</span><input type="number" id="nightTempInput" min="2700" max="6500" step="50" /><em>K</em></label>
                   <label class="phase-field"><span>亮度</span><input type="number" id="nightBrightInput" min="10" max="100" step="1" /><em>%</em></label>
                 </div>
                 <div class="phase-times">
@@ -167,27 +167,6 @@
                 <div class="range-labels"><span>0% 清晰</span><span>100% 柔和</span></div>
               </div>
 
-              <!-- 独立遮罩调节卡片 -->
-              <div class="card control-card overlay-card">
-                <div class="control-head">
-                  <div class="control-icon tint">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 3.2c2.6 3 5.8 6.6 5.8 10.1a5.8 5.8 0 0 1-11.6 0C6.2 9.8 9.4 6.2 12 3.2Z" />
-                      <path d="M9.3 14.3c.2 1.4 1.1 2.3 2.4 2.5" />
-                    </svg>
-                  </div>
-                  <div class="control-title"><strong>柔色遮罩</strong></div>
-                  <button class="switch small" id="overlaySwitch" role="switch" aria-checked="true"><span></span></button>
-                </div>
-                <div class="overlay-body" id="overlayBody">
-                  <div class="color-swatches" id="colorSwatches"></div>
-                  <div class="strength-line">
-                    <span>强度</span>
-                    <input type="range" id="strengthRange" min="0" max="100" step="1" value="12" />
-                    <b id="strengthValue">12%</b>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div class="card template-panel">

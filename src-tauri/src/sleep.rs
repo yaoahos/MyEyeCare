@@ -72,6 +72,9 @@ mod win {
     pub const TIMER_IDLE: usize = 6;
     /// 勾选锁屏时：先锁定工作站，再延迟关屏，避免锁屏界面把屏幕点亮。
     pub const LOCK_SLEEP_DELAY_MS: u64 = 800;
+    /// 未锁屏时：热键/按钮触发后延迟一点再关屏，让按键释放(keyup)先被系统处理，
+    /// 否则刚发出的关屏指令会被紧随其后的 keyup 当作输入立即唤醒（实测约 95ms）。
+    pub const KEYUP_SETTLE_DELAY_MS: u64 = 250;
     pub const HOTKEY_ID: usize = 1;
     pub const IDLE_TIMER_MS: u32 = 5_000;
     pub const SMTO_ABORTIFHUNG: u32 = 0x0002;
@@ -205,16 +208,20 @@ fn turn_off_display() -> bool {
 fn perform_sleep() {
     IDLE_ARMED.store(false, Ordering::SeqCst);
     let locked = LOCK_ON_SLEEP.load(Ordering::SeqCst) && unsafe { win::LockWorkStation() } != 0;
-    if locked {
-        // 锁屏界面出现会点亮屏幕，等它稳定后再发关屏指令。用独立线程而不是
-        // 窗口定时器：锁定后窗口定时器可能要等解锁才触发，反而会误关屏。
-        std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(win::LOCK_SLEEP_DELAY_MS));
-            turn_off_display();
-        });
+    // 两种路径都在独立线程里延迟再关屏：
+    // - 锁屏：等锁屏界面稳定后再关屏，避免它被点亮；
+    // - 未锁屏：等热键/按钮的 keyup 先被系统处理，否则紧随关屏的 keyup 会被
+    //   当作用户输入立即唤醒屏幕（实测关屏后约 95ms 就收到亮屏通知）。
+    // 用独立线程而不是窗口定时器：锁定后窗口定时器可能要等解锁才触发。
+    let delay = if locked {
+        win::LOCK_SLEEP_DELAY_MS
     } else {
+        win::KEYUP_SETTLE_DELAY_MS
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
         turn_off_display();
-    }
+    });
 }
 
 /// 注册/重注册固定全局热键 Ctrl+Enter（先注销旧的）。
